@@ -135,16 +135,6 @@ python sr2_to_obj.py "F:/My Crafts/ship.xml" "F:/My Models/ship.obj"
 | `default_radius_x` | 1.0 | 椭圆截面 X 轴半径（短边）|
 | `default_radius_z` | 1.0 | 椭圆截面 Z 轴半径（长边）|
 
-**注意**：长度自动从 XML 中的 `offset_y` 计算（长度 = offset_y × 2）
-
-## 在 Blender 中使用
-
-1. 导出 OBJ 文件后，在 Blender 中选择 **文件 > 导入 > Wavefront (.obj)**
-2. 选择生成的 `.obj` 文件
-3. 导入设置建议：
-   - 勾选 **Split by Object** 和 **Split by Group**
-   - 方向：Z 向上，Y 向前（与 SR2 坐标系匹配）
-
 ## 注意事项
 
 1. **XML 来源**：必须从 SimpleRockets 2 导出 `.xml` 格式的飞船设计文件
@@ -183,18 +173,6 @@ ModuleNotFoundError: No module named 'numpy'
 2. 在命令行中运行 `run.bat` 查看具体错误信息
 3. 检查 `Input` 文件夹中是否有 XML 文件
 
-## 技术细节
-
-- 使用 ZXY 旋转顺序（与 Unity/SR2 一致）
-- 使用冯·卡门曲线生成鼻锥形状
-- 支持 8 个 corner radius 参数实现圆角矩形截面
-- 支持层级挤压（clamp）算法
-
 ## 许可证
 
 MIT License
-
-## 致谢
-
-- SimpleRockets 2 / Juno: New Origins by Jundroo
-- 社区贡献者
