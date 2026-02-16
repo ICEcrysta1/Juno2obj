@@ -1,0 +1,7 @@
+*.obj
+*.fbx
+*.png
+
+Output/*
+Intput/*
+!Intput/Test-Juno2OBJ.xml
