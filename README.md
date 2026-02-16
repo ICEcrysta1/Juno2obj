@@ -43,14 +43,39 @@ Juno2obj/
 
 ## 使用方法
 
-### 准备输入文件
+### 方法一：使用批处理文件（推荐 Windows 用户）
+
+#### 双击运行（推荐）
+
+1. 将你的 `.xml` 文件放入 `Input` 文件夹
+2. 双击运行 `run.bat`
+3. 脚本会显示所有可用的 XML 文件列表
+4. **直接回车**使用默认文件 `Test-Juno2OBJ.xml`，或**输入文件名**选择其他文件
+5. 转换完成后询问是否打开 `Output` 文件夹
+
+**示例交互：**
+```
+[Input 文件夹中的 XML 文件]
+  - Test-Juno2OBJ.xml
+  - My Rocket.xml
+  - Fighter Craft.xml
+
+[默认] Test-Juno2OBJ.xml （直接回车使用默认）
+
+请输入要转换的文件名: My Rocket.xml
+[完成] 转换成功！
+```
+
+### 方法二：直接使用 Python 脚本
+
+#### 准备输入文件
 
 1. 在 SimpleRockets 2 中导出飞船设计为 `.xml` 文件
 2. 将 `.xml` 文件放入 `Input` 文件夹
 
-### 运行脚本
+#### 运行脚本
 
-#### 方式一：使用默认文件（推荐新手）
+**方式一：使用默认文件（推荐新手）**
 
 将输入文件命名为 `Test-Juno2OBJ.xml` 放入 `Input` 文件夹，然后运行：
 
@@ -60,7 +85,7 @@ python sr2_to_obj.py
 
 输出文件将自动生成在 `Output/Test-Juno2OBJ.obj`
 
-#### 方式二：指定文件名
+**方式二：指定文件名**
 
 ```bash
 python sr2_to_obj.py "你的飞船.xml" "你的飞船.obj"
@@ -70,16 +95,21 @@ python sr2_to_obj.py "你的飞船.xml" "你的飞船.obj"
 
 > **提示**：如果文件名包含空格，请务必使用双引号 `"` 包裹文件名。
 
-#### 方式三：指定完整路径
+**方式三：指定完整路径**
 
 ```bash
-python sr2_to_obj.py C:/path/to/input.xml C:/path/to/output.obj
+python sr2_to_obj.py "C:/path/to/input.xml" "C:/path/to/output.obj"
 ```
 
 ## 示例
 
+```batch
+:: 使用批处理（交互式，推荐）
+run.bat
+```
+
 ```bash
-# 使用默认文件
+# 使用 Python 脚本 - 默认文件
 python sr2_to_obj.py
 
 # 指定文件名（推荐加引号，防止空格问题）
@@ -142,7 +172,16 @@ python sr2_to_obj.py "My Ship.xml" "My Ship.obj"
 ModuleNotFoundError: No module named 'numpy'
 ```
 
-**解决方法**：运行 `pip install numpy` 安装依赖
+**解决方法**：
+- **如果使用 `run.bat`**：脚本会自动安装 numpy
+- **如果使用 Python 脚本**：运行 `pip install numpy` 安装依赖
+
+### 双击 run.bat 后一闪而过
+
+**解决方法**：
+1. 确保已安装 Python，并添加到系统环境变量
+2. 在命令行中运行 `run.bat` 查看具体错误信息
+3. 检查 `Input` 文件夹中是否有 XML 文件
 
 ## 技术细节
 
