@@ -202,43 +202,54 @@ class Mesh:
                 local_face = tuple(global_to_local[(v_idx, pid)] for v_idx in face)
                 local_faces.append(local_face)
             
-            # 设置法线（vertex - 每个顶点一个法线）
-            # 法线按零件ID隔离，不同零件之间不共享法线平滑
-            # 单个零件内部使用共享顶点法线，实现平滑效果
+            # 设置法线（faceVarying - 每个面顶点一个法线）
+            # 关键：同一顶点在不同面（侧面/端盖）使用不同法线，实现硬边效果
+            # 但同一零件内相同法线的顶点共享，实现平滑效果
             if use_custom_normals and self.normals:
-                # 为每个局部顶点分配法线
-                # 局部顶点是按 (全局索引, 零件ID) 排序的
-                local_normals = []
-                for v_idx, pid in sorted_keys:
-                    # 找到这个顶点对应的法线索引
-                    # 遍历所有面，找到使用这个顶点的法线
-                    normal_idx = None
-                    for face, face_ni, face_pid in zip(faces, normal_indices, part_ids):
-                        if face_pid == pid:  # 同一零件
-                            for fv, fni in zip(face, face_ni):
-                                if fv == v_idx:
-                                    normal_idx = fni
-                                    break
-                        if normal_idx is not None:
-                            break
-                    
-                    if normal_idx is not None and 0 <= normal_idx < len(self.normals):
-                        local_normals.append(self.normals[normal_idx])
-                    else:
-                        local_normals.append((0.0, 1.0, 0.0))
+                # 创建按零件和法线索引去重的顶点映射
+                # key: (global_vertex_idx, part_id, normal_idx) -> local_idx
+                vertex_normal_key_to_local = {}
+                local_vertices_with_normal = []
+                local_faces_with_normal = []
+                face_varying_normals = []
                 
-                mesh_prim.CreateNormalsAttr(local_normals)
-                mesh_prim.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
+                for face, face_ni, pid in zip(faces, normal_indices, part_ids):
+                    local_face = []
+                    for v_idx, ni in zip(face, face_ni):
+                        # 按 (顶点, 零件, 法线) 去重
+                        # 这样同一顶点不同法线会创建不同局部顶点
+                        key = (v_idx, pid, ni)
+                        if key not in vertex_normal_key_to_local:
+                            vertex_normal_key_to_local[key] = len(local_vertices_with_normal)
+                            local_vertices_with_normal.append(self.vertices[v_idx])
+                            # 存储法线值
+                            if 0 <= ni < len(self.normals):
+                                face_varying_normals.append(self.normals[ni])
+                            else:
+                                face_varying_normals.append((0.0, 1.0, 0.0))
+                        local_face.append(vertex_normal_key_to_local[key])
+                    local_faces_with_normal.append(tuple(local_face))
+                
+                # 更新顶点和面数据
+                local_vertices = local_vertices_with_normal
+                local_faces = local_faces_with_normal
+                mesh_prim.CreatePointsAttr(local_vertices)
+                
+                mesh_prim.CreateNormalsAttr(face_varying_normals)
+                mesh_prim.SetNormalsInterpolation(UsdGeom.Tokens.faceVarying)
             
             # 设置 UV（使用局部索引）
+            # UV也需要按 (顶点, 零件, 法线) 对应
             if self.uvs:
-                # 按排序后的键顺序提取UV
                 local_uvs = []
-                for v_idx, pid in sorted_keys:
+                for (v_idx, pid, ni), local_idx in vertex_normal_key_to_local.items():
                     if v_idx < len(self.uvs):
-                        local_uvs.append(self.uvs[v_idx])
+                        local_uvs.append((local_idx, self.uvs[v_idx]))
                     else:
-                        local_uvs.append((0, 0))
+                        local_uvs.append((local_idx, (0, 0)))
+                # 按局部索引排序
+                local_uvs.sort(key=lambda x: x[0])
+                local_uvs = [uv for idx, uv in local_uvs]
                 
                 tex_coords = UsdGeom.PrimvarsAPI(mesh_prim).CreatePrimvar(
                     "st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex
