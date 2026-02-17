@@ -155,9 +155,19 @@ class Mesh:
             mesh_prim.CreatePointsAttr(self.vertices)
             
             # 设置法线（可选）
+            # 注意：使用 faceVarying 插值才能让 Blender 识别为"自定义拆边法向"
             if use_custom_normals and self.normals:
-                mesh_prim.CreateNormalsAttr(self.normals)
-                mesh_prim.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
+                # 需要为每个面的每个顶点提供法线（按 face vertex indices 顺序）
+                face_varying_normals = []
+                for face_idx_tuple in faces:
+                    for vi in face_idx_tuple:
+                        if vi < len(self.normals):
+                            face_varying_normals.append(self.normals[vi])
+                        else:
+                            face_varying_normals.append((0.0, 1.0, 0.0))  # 默认向上
+                
+                mesh_prim.CreateNormalsAttr(face_varying_normals)
+                mesh_prim.SetNormalsInterpolation(UsdGeom.Tokens.faceVarying)
             
             # 设置 UV
             if self.uvs:
