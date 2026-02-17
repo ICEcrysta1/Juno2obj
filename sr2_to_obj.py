@@ -202,20 +202,33 @@ class Mesh:
                 local_face = tuple(global_to_local[(v_idx, pid)] for v_idx in face)
                 local_faces.append(local_face)
             
-            # 设置法线（faceVarying - 每个面顶点一个法线）
+            # 设置法线（vertex - 每个顶点一个法线）
             # 法线按零件ID隔离，不同零件之间不共享法线平滑
+            # 单个零件内部使用共享顶点法线，实现平滑效果
             if use_custom_normals and self.normals:
-                # 按 faceVertexIndices 的顺序构建法线数组
-                face_varying_normals = []
-                for ni_tuple in normal_indices:
-                    for ni in ni_tuple:
-                        if 0 <= ni < len(self.normals):
-                            face_varying_normals.append(self.normals[ni])
-                        else:
-                            face_varying_normals.append((0.0, 1.0, 0.0))
+                # 为每个局部顶点分配法线
+                # 局部顶点是按 (全局索引, 零件ID) 排序的
+                local_normals = []
+                for v_idx, pid in sorted_keys:
+                    # 找到这个顶点对应的法线索引
+                    # 遍历所有面，找到使用这个顶点的法线
+                    normal_idx = None
+                    for face, face_ni, face_pid in zip(faces, normal_indices, part_ids):
+                        if face_pid == pid:  # 同一零件
+                            for fv, fni in zip(face, face_ni):
+                                if fv == v_idx:
+                                    normal_idx = fni
+                                    break
+                        if normal_idx is not None:
+                            break
+                    
+                    if normal_idx is not None and 0 <= normal_idx < len(self.normals):
+                        local_normals.append(self.normals[normal_idx])
+                    else:
+                        local_normals.append((0.0, 1.0, 0.0))
                 
-                mesh_prim.CreateNormalsAttr(face_varying_normals)
-                mesh_prim.SetNormalsInterpolation(UsdGeom.Tokens.faceVarying)
+                mesh_prim.CreateNormalsAttr(local_normals)
+                mesh_prim.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
             
             # 设置 UV（使用局部索引）
             if self.uvs:
