@@ -155,9 +155,26 @@ class Mesh:
             mesh_path = root_path.AppendChild(mesh_name)
             mesh_prim = UsdGeom.Mesh.Define(stage, mesh_path)
             
-            # 提取顶点和法线索引
-            faces = [f[0] for f in face_data]  # 顶点索引 (全局)
-            normal_indices = [f[1] for f in face_data]  # 法线索引 (全局)
+            # 过滤退化面（顶点索引重复的面）
+            valid_face_data = []
+            degenerate_count = 0
+            for f in face_data:
+                face_verts = f[0]  # (v1, v2, v3)
+                if len(set(face_verts)) == 3:  # 3个顶点都不同
+                    valid_face_data.append(f)
+                else:
+                    degenerate_count += 1
+            
+            if degenerate_count > 0:
+                print(f"[WARNING] Mesh {mesh_name}: filtered {degenerate_count} degenerate faces")
+            
+            if not valid_face_data:
+                print(f"[WARNING] Mesh {mesh_name}: no valid faces after filtering, skipping")
+                continue
+            
+            # 提取顶点和法线索引（过滤后的）
+            faces = [f[0] for f in valid_face_data]  # 顶点索引 (全局)
+            normal_indices = [f[1] for f in valid_face_data]  # 法线索引 (全局)
             
             # 构建该 mesh 的局部顶点数组和索引映射
             # 收集该 mesh 使用的所有唯一顶点
@@ -179,8 +196,10 @@ class Mesh:
                 local_face = tuple(global_to_local[idx] for idx in face)
                 local_faces.append(local_face)
             
-            # 设置法线（使用全局法线索引，因为法线数组也是全局的）
+            # 设置法线（faceVarying - 每个面顶点一个法线）
             if use_custom_normals and self.normals:
+                # 按 faceVertexIndices 的顺序构建法线数组
+                # 每个面有3个顶点，所以法线数组长度 = 面数 * 3
                 face_varying_normals = []
                 for ni_tuple in normal_indices:
                     for ni in ni_tuple:
