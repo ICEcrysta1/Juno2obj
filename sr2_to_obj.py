@@ -182,35 +182,33 @@ class Mesh:
             part_ids = [f[2] for f in valid_face_data]  # 零件ID
             
             # 构建该 mesh 的局部顶点数组和索引映射
-            # 收集该 mesh 使用的所有唯一顶点
-            used_vertex_indices = set()
-            for face in faces:
-                used_vertex_indices.update(face)
+            # 收集该 mesh 使用的所有唯一顶点，按 (顶点索引, 零件ID) 去重
+            used_vertex_keys = set()  # (global_idx, part_id)
+            for face, pid in zip(faces, part_ids):
+                for v_idx in face:
+                    used_vertex_keys.add((v_idx, pid))
             
-            # 创建全局索引到局部索引的映射
-            sorted_indices = sorted(used_vertex_indices)
-            global_to_local = {global_idx: local_idx for local_idx, global_idx in enumerate(sorted_indices)}
+            # 按全局顶点索引排序，保持与参考文件一致的顺序
+            sorted_keys = sorted(used_vertex_keys, key=lambda x: (x[0], x[1]))
+            global_to_local = {key: local_idx for local_idx, key in enumerate(sorted_keys)}
             
             # 构建局部顶点数组
-            local_vertices = [self.vertices[i] for i in sorted_indices]
+            local_vertices = [self.vertices[v_idx] for v_idx, pid in sorted_keys]
             mesh_prim.CreatePointsAttr(local_vertices)
             
             # 转换面索引为局部索引
             local_faces = []
-            for face in faces:
-                local_face = tuple(global_to_local[idx] for idx in face)
+            for face, pid in zip(faces, part_ids):
+                local_face = tuple(global_to_local[(v_idx, pid)] for v_idx in face)
                 local_faces.append(local_face)
             
             # 设置法线（faceVarying - 每个面顶点一个法线）
             # 法线按零件ID隔离，不同零件之间不共享法线平滑
             if use_custom_normals and self.normals:
                 # 按 faceVertexIndices 的顺序构建法线数组
-                # 为每个面顶点生成法线，不跨零件共享法线值
                 face_varying_normals = []
-                for ni_tuple, pid in zip(normal_indices, part_ids):
+                for ni_tuple in normal_indices:
                     for ni in ni_tuple:
-                        # 直接使用法线值，不共享法线索引
-                        # 这样即使相同位置的顶点，不同零件也有独立的法线
                         if 0 <= ni < len(self.normals):
                             face_varying_normals.append(self.normals[ni])
                         else:
@@ -221,8 +219,14 @@ class Mesh:
             
             # 设置 UV（使用局部索引）
             if self.uvs:
-                # 需要为局部顶点重新排列 UV
-                local_uvs = [self.uvs[i] if i < len(self.uvs) else (0, 0) for i in sorted_indices]
+                # 按排序后的键顺序提取UV
+                local_uvs = []
+                for v_idx, pid in sorted_keys:
+                    if v_idx < len(self.uvs):
+                        local_uvs.append(self.uvs[v_idx])
+                    else:
+                        local_uvs.append((0, 0))
+                
                 tex_coords = UsdGeom.PrimvarsAPI(mesh_prim).CreatePrimvar(
                     "st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex
                 )
