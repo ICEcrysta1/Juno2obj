@@ -819,13 +819,13 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
             next_next = next_ring[next_i]
             next_i_vert = next_ring[i]
             
-            # 分解为两个三角面
-            mesh.add_face(curr_i[0], curr_next[0], next_next[0],
-                         curr_i[1], curr_next[1], next_next[1],
-                         curr_i[2], curr_next[2], next_next[2])
-            mesh.add_face(curr_i[0], next_next[0], next_i_vert[0],
-                         curr_i[1], next_next[1], next_i_vert[1],
-                         curr_i[2], next_next[2], next_i_vert[2])
+            # 分解为两个三角面（逆时针顺序）
+            mesh.add_face(curr_i[0], next_i_vert[0], next_next[0],
+                         curr_i[1], next_i_vert[1], next_next[1],
+                         curr_i[2], next_i_vert[2], next_next[2])
+            mesh.add_face(curr_i[0], next_next[0], curr_next[0],
+                         curr_i[1], next_next[1], curr_next[1],
+                         curr_i[2], next_next[2], curr_next[2])
     
     # 空心模式：生成内侧面
     if is_hollow:
@@ -843,12 +843,12 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
                 next_i_vert = next_ring[i]
                 
                 # 分解为两个三角面（注意顶点顺序与外侧面相反）
-                mesh.add_face(curr_i[0], next_i_vert[0], next_next[0],
-                             curr_i[1], next_i_vert[1], next_next[1],
-                             curr_i[2], next_i_vert[2], next_next[2])
-                mesh.add_face(curr_i[0], next_next[0], curr_next[0],
-                             curr_i[1], next_next[1], curr_next[1],
-                             curr_i[2], next_next[2], curr_next[2])
+                mesh.add_face(curr_i[0], curr_next[0], next_next[0],
+                             curr_i[1], curr_next[1], next_next[1],
+                             curr_i[2], curr_next[2], next_next[2])
+                mesh.add_face(curr_i[0], next_next[0], next_i_vert[0],
+                             curr_i[1], next_next[1], next_i_vert[1],
+                             curr_i[2], next_next[2], next_i_vert[2])
     
     # 生成底部端盖（如果是闭合的）
     if params.bottom_scale_x > 1e-6 or params.bottom_scale_z > 1e-6:
@@ -868,11 +868,11 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
                 bi_i = bottom_inner_ring[i]
                 
                 # 底部环形端盖（两个三角面）
-                mesh.add_face(bo_i[0], bo_next[0], bi_next[0],
-                             bo_i[1], bo_next[1], bi_next[1],
+                mesh.add_face(bo_i[0], bi_i[0], bi_next[0],
+                             bo_i[1], bi_i[1], bi_next[1],
                              vn_down_idx, vn_down_idx, vn_down_idx)
-                mesh.add_face(bo_i[0], bi_next[0], bi_i[0],
-                             bo_i[1], bi_next[1], bi_i[1],
+                mesh.add_face(bo_i[0], bi_next[0], bo_next[0],
+                             bo_i[1], bi_next[1], bo_next[1],
                              vn_down_idx, vn_down_idx, vn_down_idx)
         else:
             # 实心模式：生成实心端盖
@@ -892,9 +892,9 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
                 next_i = (i + 1) % segments
                 b_i = bottom_ring[i]
                 b_next = bottom_ring[next_i]
-                mesh.add_face(v_center, b_next[0], b_i[0],
-                             vt_center, b_next[1], b_i[1],
-                             vn_center, b_next[2], b_i[2])
+                mesh.add_face(v_center, b_i[0], b_next[0],
+                             vt_center, b_i[1], b_next[1],
+                             vn_center, b_i[2], b_next[2])
     
     # 返回生成的顶点数量
     if is_hollow:
@@ -1202,13 +1202,13 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
         t_i = top_indices[i]
         
         # 分解为两个三角面，使用侧面法线 (索引2)
-        # (b_i, b_next, t_next) 和 (b_i, t_next, t_i)
-        mesh.add_face(b_i[0], b_next[0], t_next[0],
-                     b_i[1], b_next[1], t_next[1],
-                     b_i[2], b_next[2], t_next[2])
-        mesh.add_face(b_i[0], t_next[0], t_i[0],
-                     b_i[1], t_next[1], t_i[1],
-                     b_i[2], t_next[2], t_i[2])
+        # 逆时针顺序：(b_i, t_i, t_next) 和 (b_i, t_next, b_next)
+        mesh.add_face(b_i[0], t_i[0], t_next[0],
+                     b_i[1], t_i[1], t_next[1],
+                     b_i[2], t_i[2], t_next[2])
+        mesh.add_face(b_i[0], t_next[0], b_next[0],
+                     b_i[1], t_next[1], b_next[1],
+                     b_i[2], t_next[2], b_next[2])
     
     # Inlet模式：生成内侧面
     if is_inlet:
@@ -1221,12 +1221,12 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             
             # 内侧面（法线朝内，面的顺序与外侧面相反）
             # 内圈存储的也是: 0=v_idx, 1=vt_idx, 2=vn_side_idx, 3=vn_cap_idx
-            mesh.add_face(bi_i[0], ti_i[0], ti_next[0],
-                         bi_i[1], ti_i[1], ti_next[1],
-                         bi_i[2], ti_i[2], ti_next[2])
-            mesh.add_face(bi_i[0], ti_next[0], bi_next[0],
-                         bi_i[1], ti_next[1], bi_next[1],
-                         bi_i[2], ti_next[2], bi_next[2])
+            mesh.add_face(bi_i[0], bi_next[0], ti_next[0],
+                         bi_i[1], bi_next[1], ti_next[1],
+                         bi_i[2], bi_next[2], ti_next[2])
+            mesh.add_face(bi_i[0], ti_next[0], ti_i[0],
+                         bi_i[1], ti_next[1], ti_i[1],
+                         bi_i[2], ti_next[2], ti_i[2])
     
     # 生成端盖
     if is_inlet:
@@ -1242,12 +1242,12 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             
             # 底部环形端盖（两个三角面）
             # 外圈使用端盖法线(索引3)，内圈也使用端盖法线(索引3)
-            mesh.add_face(bo_i[0], bo_next[0], bi_next[0],
-                         bo_i[1], bo_next[1], bi_next[1],
-                         bo_i[3], bo_next[3], bi_next[3])
-            mesh.add_face(bo_i[0], bi_next[0], bi_i[0],
-                         bo_i[1], bi_next[1], bi_i[1],
-                         bo_i[3], bi_next[3], bi_i[3])
+            mesh.add_face(bo_i[0], bi_i[0], bi_next[0],
+                         bo_i[1], bi_i[1], bi_next[1],
+                         bo_i[3], bi_i[3], bi_next[3])
+            mesh.add_face(bo_i[0], bi_next[0], bo_next[0],
+                         bo_i[1], bi_next[1], bo_next[1],
+                         bo_i[3], bi_next[3], bo_next[3])
         
         for i in range(segments):
             next_i = (i + 1) % segments
@@ -1257,12 +1257,12 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             ti_i = top_inner_indices[i]
             
             # 顶部环形端盖（两个三角面）
-            mesh.add_face(to_i[0], ti_i[0], ti_next[0],
-                         to_i[1], ti_i[1], ti_next[1],
-                         to_i[3], ti_i[3], ti_next[3])
-            mesh.add_face(to_i[0], ti_next[0], to_next[0],
-                         to_i[1], ti_next[1], to_next[1],
-                         to_i[3], ti_next[3], to_next[3])
+            mesh.add_face(to_i[0], to_next[0], ti_next[0],
+                         to_i[1], to_next[1], ti_next[1],
+                         to_i[3], to_next[3], ti_next[3])
+            mesh.add_face(to_i[0], ti_next[0], ti_i[0],
+                         to_i[1], ti_next[1], ti_i[1],
+                         to_i[3], ti_next[3], ti_i[3])
         
         return len(bottom_indices) * 4
     else:
@@ -1282,9 +1282,9 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             b_i = bottom_indices[i]
             b_next = bottom_indices[next_i]
             # 使用端盖法线 (索引3) - 统一朝下
-            mesh.add_face(v_center_bottom, b_next[0], b_i[0],
-                         vt_center_bottom, b_next[1], b_i[1],
-                         vn_down_idx, b_next[3], b_i[3])
+            mesh.add_face(v_center_bottom, b_i[0], b_next[0],
+                         vt_center_bottom, b_i[1], b_next[1],
+                         vn_down_idx, b_i[3], b_next[3])
         
         # 顶部端盖
         cut_depth = 2 * params.offset_y * vertical_shear * scale_y
@@ -1302,9 +1302,9 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             t_i = top_indices[i]
             t_next = top_indices[next_i]
             # 使用端盖法线 (索引3) - 统一朝上
-            mesh.add_face(v_center_top, t_i[0], t_next[0],
-                         vt_center_top, t_i[1], t_next[1],
-                         vn_up_idx, t_i[3], t_next[3])
+            mesh.add_face(v_center_top, t_next[0], t_i[0],
+                         vt_center_top, t_next[1], t_i[1],
+                         vn_up_idx, t_next[3], t_i[3])
         
         return len(bottom_indices) + len(top_indices) + 2
 
