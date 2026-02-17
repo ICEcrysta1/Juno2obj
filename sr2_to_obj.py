@@ -1011,7 +1011,7 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             nbx, nbz = (1.0 if cos_a > 0 else -1.0), 0
         else:
             nbx, nbz = cos_a, sin_a
-        normal_b_side = np.array([nbx, 0, nbz])
+        normal_b_side = np.array([-nbx, 0, -nbz])  # 翻转X和Z（绕Y轴旋转180度）以修正坐标系
         world_normal_b_side = R @ normal_b_side
         vn_b_side_idx = mesh.add_normal(world_normal_b_side[0], world_normal_b_side[1], world_normal_b_side[2])
         
@@ -1029,7 +1029,7 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             ntx, ntz = (1.0 if cos_a > 0 else -1.0), 0
         else:
             ntx, ntz = cos_a, sin_a
-        normal_t_side = np.array([ntx, 0, ntz])
+        normal_t_side = np.array([-ntx, 0, -ntz])  # 翻转X和Z（绕Y轴旋转180度）以修正坐标系
         world_normal_t_side = R @ normal_t_side
         vn_t_side_idx = mesh.add_normal(world_normal_t_side[0], world_normal_t_side[1], world_normal_t_side[2])
         
@@ -1064,8 +1064,9 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             world_ti = R @ local_ti + pos
             
             # 内圈法线（朝内，与外圈相反）
-            normal_bi = np.array([-nbx, 0, -nbz])
-            normal_ti = np.array([-ntx, 0, -ntz])
+            # 外圈已经是 [-nbx, 0, -nbz]，所以内圈要再取反
+            normal_bi = np.array([nbx, 0, nbz])
+            normal_ti = np.array([ntx, 0, ntz])
             world_normal_bi = R @ normal_bi
             world_normal_ti = R @ normal_ti
             
