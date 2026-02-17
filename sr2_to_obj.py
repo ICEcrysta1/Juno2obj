@@ -65,8 +65,10 @@ class Mesh:
         self.vertices: List[Tuple[float, float, float]] = []
         self.normals: List[Tuple[float, float, float]] = []
         self.uvs: List[Tuple[float, float]] = []
-        self.faces: List[Tuple[int, int, int, int, int, int, int, int, int, str]] = []  # v1,v2,v3, vt1,vt2,vt3, vn1,vn2,vn3, material_name
+        # v1,v2,v3, vt1,vt2,vt3, vn1,vn2,vn3, material_name, part_id
+        self.faces: List[Tuple[int, int, int, int, int, int, int, int, int, str, int]] = []
         self.current_material: str = ""
+        self.current_part_id: int = 0  # 当前零件ID，用于隔离不同零件的法线平滑
     
     def add_vertex(self, x: float, y: float, z: float) -> int:
         """添加顶点，返回顶点索引（从1开始）"""
@@ -90,20 +92,22 @@ class Mesh:
     def add_face(self, v1: int, v2: int, v3: int, 
                  vt1: int = 0, vt2: int = 0, vt3: int = 0,
                  vn1: int = 0, vn2: int = 0, vn3: int = 0,
-                 material_name: str = ""):
+                 material_name: str = "", part_id: int = None):
         """添加三角面"""
         mat = material_name if material_name else self.current_material
-        self.faces.append((v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat))
+        pid = part_id if part_id is not None else self.current_part_id
+        self.faces.append((v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat, pid))
     
     def add_quad(self, v1: int, v2: int, v3: int, v4: int,
                  vt1: int = 0, vt2: int = 0, vt3: int = 0, vt4: int = 0,
                  vn1: int = 0, vn2: int = 0, vn3: int = 0, vn4: int = 0,
-                 material_name: str = ""):
+                 material_name: str = "", part_id: int = None):
         """添加四边面（分解为两个三角面）"""
         # 四边形 v1-v2-v3-v4 -> 三角面 (v1,v2,v3) 和 (v1,v3,v4)
         mat = material_name if material_name else self.current_material
-        self.add_face(v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat)
-        self.add_face(v1, v3, v4, vt1, vt3, vt4, vn1, vn3, vn4, mat)
+        pid = part_id if part_id is not None else self.current_part_id
+        self.add_face(v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat, pid)
+        self.add_face(v1, v3, v4, vt1, vt3, vt4, vn1, vn3, vn4, mat, pid)
     
     def write_usd(self, filename: str, materials: dict = None, use_custom_normals: bool = True, mesh_prefix: str = "Mesh"):
         """写入USD文件 (ASCII格式)
@@ -139,14 +143,14 @@ class Mesh:
         root_prim = stage.DefinePrim(root_path, "Xform")
         stage.SetDefaultPrim(root_prim)
         
-        # 按材质分组创建 mesh
+        # 按材质分组创建 mesh，但法线按零件ID隔离
         from collections import defaultdict
         faces_by_material = defaultdict(list)
         
         for face in self.faces:
-            v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat_name = face
-            # 存储顶点索引和法线索引（USD 使用 0-based 索引）
-            faces_by_material[mat_name].append(((v1-1, v2-1, v3-1), (vn1-1, vn2-1, vn3-1)))
+            v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat_name, part_id = face
+            # 存储顶点索引、法线索引和零件ID（USD 使用 0-based 索引）
+            faces_by_material[mat_name].append(((v1-1, v2-1, v3-1), (vn1-1, vn2-1, vn3-1), part_id))
         
         mesh_index = 0
         for mat_name, face_data in faces_by_material.items():
@@ -172,9 +176,10 @@ class Mesh:
                 print(f"[WARNING] Mesh {mesh_name}: no valid faces after filtering, skipping")
                 continue
             
-            # 提取顶点和法线索引（过滤后的）
+            # 提取顶点、法线索引和零件ID（过滤后的）
             faces = [f[0] for f in valid_face_data]  # 顶点索引 (全局)
             normal_indices = [f[1] for f in valid_face_data]  # 法线索引 (全局)
+            part_ids = [f[2] for f in valid_face_data]  # 零件ID
             
             # 构建该 mesh 的局部顶点数组和索引映射
             # 收集该 mesh 使用的所有唯一顶点
@@ -197,12 +202,15 @@ class Mesh:
                 local_faces.append(local_face)
             
             # 设置法线（faceVarying - 每个面顶点一个法线）
+            # 法线按零件ID隔离，不同零件之间不共享法线平滑
             if use_custom_normals and self.normals:
                 # 按 faceVertexIndices 的顺序构建法线数组
-                # 每个面有3个顶点，所以法线数组长度 = 面数 * 3
+                # 为每个面顶点生成法线，不跨零件共享法线值
                 face_varying_normals = []
-                for ni_tuple in normal_indices:
+                for ni_tuple, pid in zip(normal_indices, part_ids):
                     for ni in ni_tuple:
+                        # 直接使用法线值，不共享法线索引
+                        # 这样即使相同位置的顶点，不同零件也有独立的法线
                         if 0 <= ni < len(self.normals):
                             face_varying_normals.append(self.normals[ni])
                         else:
@@ -1464,6 +1472,12 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
             mat_name = "default"
         
         print(f"处理部件 {part_id} ({part_type}) at {position}, rot {rotation}, material={mat_idx}")
+        
+        # 设置当前零件ID，用于隔离不同零件的法线平滑
+        try:
+            mesh.current_part_id = int(part_id) if part_id != 'unknown' else 0
+        except:
+            mesh.current_part_id = 0
         
         if part_type in ('Fuselage1', 'Strut1'):
             # 找到Fuselage子元素（Strut1和Fuselage1使用相同的Fuselage参数结构）
