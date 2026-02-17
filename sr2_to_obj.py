@@ -105,8 +105,13 @@ class Mesh:
         self.add_face(v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat)
         self.add_face(v1, v3, v4, vt1, vt3, vt4, vn1, vn3, vn4, mat)
     
-    def write_usd(self, filename: str):
-        """写入USD文件 (ASCII格式)"""
+    def write_usd(self, filename: str, materials: dict = None):
+        """写入USD文件 (ASCII格式)
+        
+        参数:
+            filename: 输出文件路径
+            materials: 材质字典，键为材质名称，值为 Material 对象
+        """
         try:
             import sys
             import os
@@ -168,10 +173,33 @@ class Mesh:
             face_vertex_indices = [idx for face in faces for idx in face]
             mesh_prim.CreateFaceVertexIndicesAttr(face_vertex_indices)
             
-            # 创建默认材质
+            # 创建材质并绑定
             if mat_name:
                 mat_path = root_path.AppendChild(f"Mat_{mesh_name}")
                 material = UsdShade.Material.Define(stage, mat_path)
+                
+                # 如果提供了材质数据，设置材质属性
+                if materials and mat_name in materials:
+                    mat_data = materials[mat_name]
+                    # 创建 PBR 着色器 (Preview Surface)
+                    shader_path = mat_path.AppendChild("PreviewSurface")
+                    shader = UsdShade.Shader.Define(stage, shader_path)
+                    shader.CreateIdAttr("UsdPreviewSurface")
+                    
+                    # 设置漫反射颜色 (Diffuse Color)
+                    diffuse_color = Gf.Vec3f(mat_data.color[0], mat_data.color[1], mat_data.color[2])
+                    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(diffuse_color)
+                    
+                    # 设置金属度 (Metallic)
+                    shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(mat_data.metallic)
+                    
+                    # 设置粗糙度 (Roughness)
+                    shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(mat_data.roughness)
+                    
+                    # 连接着色器到材质
+                    shader_output = shader.CreateOutput("surface", Sdf.ValueTypeNames.Token)
+                    material.CreateSurfaceOutput().ConnectToSource(shader_output)
+                
                 UsdShade.MaterialBindingAPI(mesh_prim).Bind(material)
             
             mesh_index += 1
@@ -1363,10 +1391,15 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
         except:
             rotation = (0, 0, 0)
         
-        # 获取材质索引
+        # 获取材质索引和名称
         mat_idx = get_material_index(part)
         used_material_indices.add(mat_idx)
-        mat_name = f"mat_{mat_idx}" if mat_idx < len(materials) else "mat_0"
+        if mat_idx < len(materials):
+            # 使用实际材质名称（清理特殊字符以符合USD命名规范）
+            raw_name = materials[mat_idx].name
+            mat_name = raw_name.replace(" ", "_").replace("-", "_").replace(".", "_").replace("/", "_")
+        else:
+            mat_name = "default"
         
         print(f"处理部件 {part_id} ({part_type}) at {position}, rot {rotation}, material={mat_idx}")
         
@@ -1521,8 +1554,14 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
         # elif part_type == 'Block1':
         #     pass
     
+    # 构建材质字典（键为清理后的材质名称）
+    materials_dict = {}
+    for mat in materials:
+        clean_name = mat.name.replace(" ", "_").replace("-", "_").replace(".", "_").replace("/", "_")
+        materials_dict[clean_name] = mat
+    
     # 写入USD文件
-    mesh.write_usd(obj_file)
+    mesh.write_usd(obj_file, materials_dict)
     print(f"\n模型已导出到: {obj_file}")
     print(f"总顶点数: {len(mesh.vertices)}")
     print(f"总面数: {len(mesh.faces)}")
