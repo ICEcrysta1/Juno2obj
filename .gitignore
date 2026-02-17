@@ -3,5 +3,5 @@
 *.png
 
 Output/*
-Intput/*
-!Intput/Test-Juno2OBJ.xml
+Input/*
+!Input/Test-Juno2OBJ.xml
