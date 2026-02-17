@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SimpleRockets 2 Fuselage to OBJ Converter
+SimpleRockets 2 Fuselage to USD Converter
 支持椭圆截面圆柱体、offset、长度变化、尖锐化和正方体变形
 """
 
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 @dataclass
 class FuselageParams:
-    """Fuselage参数类"""
+    """Fuselage参数类，从SimpleRockets 2部件解析"""
     length: float = 5.0           # 长度
     radius_x: float = 2.0         # 椭圆短边半径 (X轴)
     radius_z: float = 4.0         # 椭圆长边半径 (Z轴，朝上)
@@ -60,7 +60,7 @@ class Material:
 
 
 class Mesh:
-    """网格类，用于构建OBJ数据"""
+    """网格类，用于构建USD数据"""
     def __init__(self):
         self.vertices: List[Tuple[float, float, float]] = []
         self.normals: List[Tuple[float, float, float]] = []
@@ -104,58 +104,6 @@ class Mesh:
         mat = material_name if material_name else self.current_material
         self.add_face(v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat)
         self.add_face(v1, v3, v4, vt1, vt3, vt4, vn1, vn3, vn4, mat)
-    
-    def write_obj(self, filename: str, mtl_filename: str = ""):
-        """写入OBJ文件"""
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write("# SimpleRockets 2 Fuselage to OBJ Export\n")
-            f.write(f"# Vertices: {len(self.vertices)}\n")
-            f.write(f"# Faces: {len(self.faces)}\n\n")
-            
-            # 引用材质文件
-            if mtl_filename:
-                f.write(f"mtllib {mtl_filename}\n\n")
-            
-            # 写入顶点
-            for v in self.vertices:
-                f.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
-            
-            # 写入UV坐标
-            if self.uvs:
-                f.write("\n")
-                for vt in self.uvs:
-                    f.write(f"vt {vt[0]:.6f} {vt[1]:.6f}\n")
-            
-            # 写入法线
-            if self.normals:
-                f.write("\n")
-                for vn in self.normals:
-                    f.write(f"vn {vn[0]:.6f} {vn[1]:.6f} {vn[2]:.6f}\n")
-            
-            # 写入面，按材质分组
-            f.write("\n")
-            current_mat = None
-            for face in self.faces:
-                v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat_name = face
-                
-                # 材质变化时输出usemtl
-                if mat_name and mat_name != current_mat:
-                    f.write(f"\nusemtl {mat_name}\n")
-                    current_mat = mat_name
-                
-                # 构建面的字符串
-                if vn1 > 0 and vt1 > 0:
-                    # 有顶点、纹理、法线
-                    f.write(f"f {v1}/{vt1}/{vn1} {v2}/{vt2}/{vn2} {v3}/{vt3}/{vn3}\n")
-                elif vn1 > 0:
-                    # 有顶点、法线，无纹理
-                    f.write(f"f {v1}//{vn1} {v2}//{vn2} {v3}//{vn3}\n")
-                elif vt1 > 0:
-                    # 有顶点、纹理，无法线
-                    f.write(f"f {v1}/{vt1} {v2}/{vt2} {v3}/{vt3}\n")
-                else:
-                    # 只有顶点
-                    f.write(f"f {v1} {v2} {v3}\n")
     
     def write_usd(self, filename: str):
         """写入USD文件 (ASCII格式)"""
@@ -1366,54 +1314,6 @@ def get_material_index(part_elem: ET.Element) -> int:
         return 0
 
 
-def write_mtl(materials: List[Material], filename: str, used_indices: set):
-    """写入MTL材质文件"""
-    with open(filename, 'w', encoding='utf-8') as f:
-        f.write("# SimpleRockets 2 Material Export\n")
-        f.write("# Format: Standard MTL with PBR extensions\n\n")
-        
-        for idx in sorted(used_indices):
-            if idx < len(materials):
-                mat = materials[idx]
-                # 材质名使用索引，方便对应
-                f.write(f"newmtl mat_{idx}\n")
-                f.write(f"# {mat.name}\n")
-                
-                # 基础色 (Kd)
-                f.write(f"Kd {mat.color[0]:.6f} {mat.color[1]:.6f} {mat.color[2]:.6f}\n")
-                
-                # 环境光 (Ka) - 通常与Kd相同
-                f.write(f"Ka {mat.color[0]:.6f} {mat.color[1]:.6f} {mat.color[2]:.6f}\n")
-                
-                # 高光 (Ks) - 金属度越高，高光色越接近基础色
-                ks_r = mat.color[0] * mat.metallic
-                ks_g = mat.color[1] * mat.metallic
-                ks_b = mat.color[2] * mat.metallic
-                f.write(f"Ks {ks_r:.6f} {ks_g:.6f} {ks_b:.6f}\n")
-                
-                # 高光指数 (Ns) - 根据粗糙度转换
-                # roughness 0 = 光滑 = 高Ns, roughness 1 = 粗糙 = 低Ns
-                ns = (1.0 - mat.roughness) * 1000.0
-                f.write(f"Ns {ns:.6f}\n")
-                
-                # 溶解度/透明度 (d) - 默认为1.0（不透明）
-                f.write(f"d 1.0\n")
-                
-                # 照明模型
-                f.write(f"illum 2\n")
-                
-                # PBR扩展（Blender等现代渲染器支持）
-                f.write(f"# PBR Extensions\n")
-                f.write(f"# Metallic: {mat.metallic:.6f}\n")
-                f.write(f"# Roughness: {mat.roughness:.6f}\n")
-                
-                # 使用 Blender 的 Principled BSDF 扩展格式
-                f.write(f"Pr {mat.roughness:.6f}\n")
-                f.write(f"Pm {mat.metallic:.6f}\n")
-                
-                f.write("\n")
-
-
 def convert_sr2_to_obj(xml_file: str, obj_file: str, 
                         default_radius_x: float = 1.0,
                         default_radius_z: float = 1.0):
@@ -1621,31 +1521,11 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
         # elif part_type == 'Block1':
         #     pass
     
-    # 判断输出格式
-    file_ext = os.path.splitext(obj_file)[1].lower()
-    output_format = 'usd' if file_ext in ('.usd', '.usda', '.usdc') else 'obj'
-    
-    if output_format == 'usd':
-        # 写入USD文件
-        mesh.write_usd(obj_file)
-        print(f"\n模型已导出到: {obj_file}")
-        print(f"总顶点数: {len(mesh.vertices)}")
-        print(f"总面数: {len(mesh.faces)}")
-    else:
-        # 生成MTL文件名
-        base_name, ext = os.path.splitext(obj_file)
-        mtl_file = base_name + ".mtl"
-        mtl_filename = os.path.basename(mtl_file)
-        
-        # 写入MTL文件
-        write_mtl(materials, mtl_file, used_material_indices)
-        print(f"\n材质已导出到: {mtl_file}")
-        
-        # 写入OBJ文件
-        mesh.write_obj(obj_file, mtl_filename)
-        print(f"模型已导出到: {obj_file}")
-        print(f"总顶点数: {len(mesh.vertices)}")
-        print(f"总面数: {len(mesh.faces)}")
+    # 写入USD文件
+    mesh.write_usd(obj_file)
+    print(f"\n模型已导出到: {obj_file}")
+    print(f"总顶点数: {len(mesh.vertices)}")
+    print(f"总面数: {len(mesh.faces)}")
 
 
 def main():
@@ -1662,10 +1542,6 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     
     # 命令行参数处理
-    use_usd = '--usd' in sys.argv
-    if use_usd:
-        sys.argv.remove('--usd')
-    
     if len(sys.argv) >= 3:
         # 如果提供的是完整路径，直接使用；否则从 Input 文件夹查找
         xml_input = sys.argv[1]
@@ -1683,10 +1559,7 @@ def main():
     else:
         # 默认文件：从 Input 读取，输出到 Output
         xml_file = os.path.join(input_dir, 'Test-Juno2OBJ.xml')
-        if use_usd:
-            obj_file = os.path.join(output_dir, 'Test-Juno2OBJ.usda')
-        else:
-            obj_file = os.path.join(output_dir, 'Test-Juno2OBJ.obj')
+        obj_file = os.path.join(output_dir, 'Test-Juno2OBJ.usda')
     
     # 检查输入文件是否存在
     if not os.path.exists(xml_file):
@@ -1694,7 +1567,7 @@ def main():
         print(f"请将 XML 文件放入 Input 文件夹: {input_dir}")
         sys.exit(1)
     
-    # 转换XML到OBJ/USD
+    # 转换XML到USD
     # 长度从 offset_y 自动计算: 长度 = offset_y * 2
     convert_sr2_to_obj(
         xml_file=xml_file,

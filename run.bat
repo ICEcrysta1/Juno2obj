@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
-title SimpleRockets 2 to OBJ/USD Converter
+title SimpleRockets 2 to USD Converter
 
 cd /d "%~dp0"
 
@@ -36,13 +36,8 @@ if not exist "Output" mkdir "Output"
 :MAIN_LOOP
 cls
 echo ============================================
-echo  SimpleRockets 2 to OBJ/USD Converter
+echo  SimpleRockets 2 to USD Converter
 echo ============================================
-echo.
-echo [输出格式]
-echo   1. OBJ  (默认)
-echo   2. USD  (Pixar Universal Scene Description)
-echo.
 echo.
 
 echo --------------------------------------------
@@ -88,7 +83,7 @@ set /p "USER_INPUT=请输入要转换的文件名: "
 if "!USER_INPUT!"=="" (
     if exist "Input\%DEFAULT_FILE%" (
         set "INPUT_FILE=%DEFAULT_FILE%"
-        set "OUTPUT_NAME=Test-Juno2OBJ.obj"
+        set "OUTPUT_NAME=Test-Juno2OBJ.usda"
     ) else (
         echo.
         echo [错误] 默认文件不存在
@@ -107,29 +102,17 @@ if "!USER_INPUT!"=="" (
         goto MAIN_LOOP
     )
     
-    for %%B in ("!INPUT_FILE!") do set "OUTPUT_NAME=%%~nB.obj"
+    for %%B in ("!INPUT_FILE!") do set "OUTPUT_NAME=%%~nB.usda"
 )
 
 echo.
 echo ============================================
 echo [信息] 输入文件: Input\!INPUT_FILE!
-
-set /p "FORMAT_CHOICE=请选择输出格式 (1=OBJ, 2=USD, 直接回车=OBJ): "
-if "!FORMAT_CHOICE!"=="" set "FORMAT_CHOICE=1"
-
-if "!FORMAT_CHOICE!"=="2" (
-    for %%B in ("!INPUT_FILE!") do set "OUTPUT_NAME=%%~nB.usda"
-    set "FORMAT_FLAG=--usd"
-) else (
-    for %%B in ("!INPUT_FILE!") do set "OUTPUT_NAME=%%~nB.obj"
-    set "FORMAT_FLAG="
-)
-
 echo [信息] 输出文件: Output\!OUTPUT_NAME!
 echo ============================================
 echo.
 
-python sr2_to_obj.py "!INPUT_FILE!" "!OUTPUT_NAME!" !FORMAT_FLAG!
+python sr2_to_obj.py "!INPUT_FILE!" "!OUTPUT_NAME!"
 
 if errorlevel 1 (
     echo.
