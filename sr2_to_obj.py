@@ -143,45 +143,67 @@ class Mesh:
         
         for face in self.faces:
             v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat_name = face
-            faces_by_material[mat_name].append((v1-1, v2-1, v3-1))  # USD 使用 0-based 索引
+            # 存储顶点索引和法线索引（USD 使用 0-based 索引）
+            faces_by_material[mat_name].append(((v1-1, v2-1, v3-1), (vn1-1, vn2-1, vn3-1)))
         
         mesh_index = 0
-        for mat_name, faces in faces_by_material.items():
+        for mat_name, face_data in faces_by_material.items():
             mesh_name = f"Mesh_{mesh_index}" if not mat_name else mat_name.replace(" ", "_").replace("-", "_")
             mesh_path = root_path.AppendChild(mesh_name)
             mesh_prim = UsdGeom.Mesh.Define(stage, mesh_path)
             
-            # 设置顶点
-            mesh_prim.CreatePointsAttr(self.vertices)
+            # 提取顶点和法线索引
+            faces = [f[0] for f in face_data]  # 顶点索引 (全局)
+            normal_indices = [f[1] for f in face_data]  # 法线索引 (全局)
             
-            # 设置法线（可选）
-            # 注意：使用 faceVarying 插值才能让 Blender 识别为"自定义拆边法向"
+            # 构建该 mesh 的局部顶点数组和索引映射
+            # 收集该 mesh 使用的所有唯一顶点
+            used_vertex_indices = set()
+            for face in faces:
+                used_vertex_indices.update(face)
+            
+            # 创建全局索引到局部索引的映射
+            sorted_indices = sorted(used_vertex_indices)
+            global_to_local = {global_idx: local_idx for local_idx, global_idx in enumerate(sorted_indices)}
+            
+            # 构建局部顶点数组
+            local_vertices = [self.vertices[i] for i in sorted_indices]
+            mesh_prim.CreatePointsAttr(local_vertices)
+            
+            # 转换面索引为局部索引
+            local_faces = []
+            for face in faces:
+                local_face = tuple(global_to_local[idx] for idx in face)
+                local_faces.append(local_face)
+            
+            # 设置法线（使用全局法线索引，因为法线数组也是全局的）
             if use_custom_normals and self.normals:
-                # 需要为每个面的每个顶点提供法线（按 face vertex indices 顺序）
                 face_varying_normals = []
-                for face_idx_tuple in faces:
-                    for vi in face_idx_tuple:
-                        if vi < len(self.normals):
-                            face_varying_normals.append(self.normals[vi])
+                for ni_tuple in normal_indices:
+                    for ni in ni_tuple:
+                        if 0 <= ni < len(self.normals):
+                            face_varying_normals.append(self.normals[ni])
                         else:
-                            face_varying_normals.append((0.0, 1.0, 0.0))  # 默认向上
+                            face_varying_normals.append((0.0, 1.0, 0.0))
                 
                 mesh_prim.CreateNormalsAttr(face_varying_normals)
                 mesh_prim.SetNormalsInterpolation(UsdGeom.Tokens.faceVarying)
             
-            # 设置 UV
+            # 设置 UV（使用局部索引）
             if self.uvs:
+                # 需要为局部顶点重新排列 UV
+                local_uvs = [self.uvs[i] if i < len(self.uvs) else (0, 0) for i in sorted_indices]
                 tex_coords = UsdGeom.PrimvarsAPI(mesh_prim).CreatePrimvar(
                     "st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex
                 )
-                tex_coords.Set(self.uvs)
+                tex_coords.Set(local_uvs)
             
             # 设置面数（每个面都是三角形）
-            face_vertex_counts = [3] * len(faces)
+            face_vertex_counts = [3] * len(local_faces)
             mesh_prim.CreateFaceVertexCountsAttr(face_vertex_counts)
             
-            # 展平顶点索引
-            face_vertex_indices = [idx for face in faces for idx in face]
+            # 展平局部顶点索引
+            face_vertex_indices = [idx for face in local_faces for idx in face]
             mesh_prim.CreateFaceVertexIndicesAttr(face_vertex_indices)
             
             # 创建材质并绑定
