@@ -156,6 +156,80 @@ class Mesh:
                 else:
                     # 只有顶点
                     f.write(f"f {v1} {v2} {v3}\n")
+    
+    def write_usd(self, filename: str):
+        """写入USD文件 (ASCII格式)"""
+        try:
+            import sys
+            import os
+            # 添加本地依赖路径
+            deps_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'deps')
+            if deps_path not in sys.path:
+                sys.path.insert(0, deps_path)
+            
+            from pxr import Usd, UsdGeom, Sdf, Gf, UsdShade
+        except ImportError as e:
+            raise ImportError(f"USD库加载失败: {e}\n请确保 deps 目录包含 usd-core") from e
+        
+        # 创建舞台
+        stage = Usd.Stage.CreateNew(filename)
+        
+        # 设置单位 (米)
+        UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+        UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)
+        
+        # 创建根 prim
+        root_path = Sdf.Path("/Root")
+        root_prim = stage.DefinePrim(root_path, "Xform")
+        stage.SetDefaultPrim(root_prim)
+        
+        # 按材质分组创建 mesh
+        from collections import defaultdict
+        faces_by_material = defaultdict(list)
+        
+        for face in self.faces:
+            v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat_name = face
+            faces_by_material[mat_name].append((v1-1, v2-1, v3-1))  # USD 使用 0-based 索引
+        
+        mesh_index = 0
+        for mat_name, faces in faces_by_material.items():
+            mesh_name = f"Mesh_{mesh_index}" if not mat_name else mat_name.replace(" ", "_").replace("-", "_")
+            mesh_path = root_path.AppendChild(mesh_name)
+            mesh_prim = UsdGeom.Mesh.Define(stage, mesh_path)
+            
+            # 设置顶点
+            mesh_prim.CreatePointsAttr(self.vertices)
+            
+            # 设置法线
+            if self.normals:
+                mesh_prim.CreateNormalsAttr(self.normals)
+                mesh_prim.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
+            
+            # 设置 UV
+            if self.uvs:
+                tex_coords = UsdGeom.PrimvarsAPI(mesh_prim).CreatePrimvar(
+                    "st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex
+                )
+                tex_coords.Set(self.uvs)
+            
+            # 设置面数（每个面都是三角形）
+            face_vertex_counts = [3] * len(faces)
+            mesh_prim.CreateFaceVertexCountsAttr(face_vertex_counts)
+            
+            # 展平顶点索引
+            face_vertex_indices = [idx for face in faces for idx in face]
+            mesh_prim.CreateFaceVertexIndicesAttr(face_vertex_indices)
+            
+            # 创建默认材质
+            if mat_name:
+                mat_path = root_path.AppendChild(f"Mat_{mesh_name}")
+                material = UsdShade.Material.Define(stage, mat_path)
+                UsdShade.MaterialBindingAPI(mesh_prim).Bind(material)
+            
+            mesh_index += 1
+        
+        # 保存文件
+        stage.GetRootLayer().Save()
 
 
 def parse_vector(text: str) -> Tuple[float, float, float]:
@@ -1344,15 +1418,17 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
                         default_radius_x: float = 1.0,
                         default_radius_z: float = 1.0):
     """
-    将SimpleRockets 2的XML转换为OBJ文件
+    将SimpleRockets 2的XML转换为OBJ/USD文件
     
     参数:
         xml_file: 输入XML文件路径
-        obj_file: 输出OBJ文件路径
+        obj_file: 输出OBJ/USD文件路径
         default_radius_x: 默认椭圆短边半径 (X轴)
         default_radius_z: 默认椭圆长边半径 (Z轴)
         default_length: 默认圆柱长度
     """
+    import os
+    
     # 解析XML
     tree = ET.parse(xml_file)
     root = tree.getroot()
@@ -1545,21 +1621,31 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
         # elif part_type == 'Block1':
         #     pass
     
-    # 生成MTL文件名
-    import os
-    base_name, ext = os.path.splitext(obj_file)
-    mtl_file = base_name + ".mtl"
-    mtl_filename = os.path.basename(mtl_file)
+    # 判断输出格式
+    file_ext = os.path.splitext(obj_file)[1].lower()
+    output_format = 'usd' if file_ext in ('.usd', '.usda', '.usdc') else 'obj'
     
-    # 写入MTL文件
-    write_mtl(materials, mtl_file, used_material_indices)
-    print(f"\n材质已导出到: {mtl_file}")
-    
-    # 写入OBJ文件
-    mesh.write_obj(obj_file, mtl_filename)
-    print(f"模型已导出到: {obj_file}")
-    print(f"总顶点数: {len(mesh.vertices)}")
-    print(f"总面数: {len(mesh.faces)}")
+    if output_format == 'usd':
+        # 写入USD文件
+        mesh.write_usd(obj_file)
+        print(f"\n模型已导出到: {obj_file}")
+        print(f"总顶点数: {len(mesh.vertices)}")
+        print(f"总面数: {len(mesh.faces)}")
+    else:
+        # 生成MTL文件名
+        base_name, ext = os.path.splitext(obj_file)
+        mtl_file = base_name + ".mtl"
+        mtl_filename = os.path.basename(mtl_file)
+        
+        # 写入MTL文件
+        write_mtl(materials, mtl_file, used_material_indices)
+        print(f"\n材质已导出到: {mtl_file}")
+        
+        # 写入OBJ文件
+        mesh.write_obj(obj_file, mtl_filename)
+        print(f"模型已导出到: {obj_file}")
+        print(f"总顶点数: {len(mesh.vertices)}")
+        print(f"总面数: {len(mesh.faces)}")
 
 
 def main():
@@ -1576,6 +1662,10 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     
     # 命令行参数处理
+    use_usd = '--usd' in sys.argv
+    if use_usd:
+        sys.argv.remove('--usd')
+    
     if len(sys.argv) >= 3:
         # 如果提供的是完整路径，直接使用；否则从 Input 文件夹查找
         xml_input = sys.argv[1]
@@ -1593,7 +1683,10 @@ def main():
     else:
         # 默认文件：从 Input 读取，输出到 Output
         xml_file = os.path.join(input_dir, 'Test-Juno2OBJ.xml')
-        obj_file = os.path.join(output_dir, 'Test-Juno2OBJ.obj')
+        if use_usd:
+            obj_file = os.path.join(output_dir, 'Test-Juno2OBJ.usda')
+        else:
+            obj_file = os.path.join(output_dir, 'Test-Juno2OBJ.obj')
     
     # 检查输入文件是否存在
     if not os.path.exists(xml_file):
@@ -1601,7 +1694,7 @@ def main():
         print(f"请将 XML 文件放入 Input 文件夹: {input_dir}")
         sys.exit(1)
     
-    # 转换XML到OBJ
+    # 转换XML到OBJ/USD
     # 长度从 offset_y 自动计算: 长度 = offset_y * 2
     convert_sr2_to_obj(
         xml_file=xml_file,

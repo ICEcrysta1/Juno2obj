@@ -1,9 +1,12 @@
 @echo off
 setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
-title SimpleRockets 2 to OBJ Converter
+title SimpleRockets 2 to OBJ/USD Converter
 
 cd /d "%~dp0"
+
+:: 设置 Python 路径包含本地依赖
+set "PYTHONPATH=%~dp0deps;%PYTHONPATH%"
 
 set "DEFAULT_FILE=Test-Juno2OBJ.xml"
 
@@ -33,8 +36,13 @@ if not exist "Output" mkdir "Output"
 :MAIN_LOOP
 cls
 echo ============================================
-echo  SimpleRockets 2 to OBJ Converter
+echo  SimpleRockets 2 to OBJ/USD Converter
 echo ============================================
+echo.
+echo [输出格式]
+echo   1. OBJ  (默认)
+echo   2. USD  (Pixar Universal Scene Description)
+echo.
 echo.
 
 echo --------------------------------------------
@@ -105,11 +113,23 @@ if "!USER_INPUT!"=="" (
 echo.
 echo ============================================
 echo [信息] 输入文件: Input\!INPUT_FILE!
+
+set /p "FORMAT_CHOICE=请选择输出格式 (1=OBJ, 2=USD, 直接回车=OBJ): "
+if "!FORMAT_CHOICE!"=="" set "FORMAT_CHOICE=1"
+
+if "!FORMAT_CHOICE!"=="2" (
+    for %%B in ("!INPUT_FILE!") do set "OUTPUT_NAME=%%~nB.usda"
+    set "FORMAT_FLAG=--usd"
+) else (
+    for %%B in ("!INPUT_FILE!") do set "OUTPUT_NAME=%%~nB.obj"
+    set "FORMAT_FLAG="
+)
+
 echo [信息] 输出文件: Output\!OUTPUT_NAME!
 echo ============================================
 echo.
 
-python sr2_to_obj.py "!INPUT_FILE!" "!OUTPUT_NAME!"
+python sr2_to_obj.py "!INPUT_FILE!" "!OUTPUT_NAME!" !FORMAT_FLAG!
 
 if errorlevel 1 (
     echo.

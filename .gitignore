@@ -4,4 +4,9 @@
 
 Output/*
 Input/*
+__pycache__/*
 !Input/Test-Juno2OBJ.xml
+
+# Dependencies
+deps/
+*.whl
