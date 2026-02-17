@@ -922,18 +922,38 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
             center_local = np.array([center_x, center_y, center_z])
             center_world = R @ center_local + pos
             
+            # 底部端盖使用统一的朝下法线
             normal_down = R @ np.array([0, -1, 0])
-            v_center = mesh.add_vertex(center_world[0], center_world[1], center_world[2])
-            vn_center = mesh.add_normal(normal_down[0], normal_down[1], normal_down[2])
-            vt_center = mesh.add_uv(0.5, 0.0)
+            vn_down_idx = mesh.add_normal(normal_down[0], normal_down[1], normal_down[2])
             
+            v_center = mesh.add_vertex(center_world[0], center_world[1], center_world[2])
+            vt_center = mesh.add_uv(0.5, 0.5)
+            
+            # 为底部端盖创建新的外圈顶点（使用朝下法线，不与侧面共享）
+            bottom_cap_indices = []
+            for i in range(segments):
+                # 复用侧面外圈顶点的位置和UV，但使用朝下法线
+                b_i = bottom_ring[i]
+                v_idx = mesh.add_vertex(
+                    mesh.vertices[b_i[0] - 1][0],
+                    mesh.vertices[b_i[0] - 1][1],
+                    mesh.vertices[b_i[0] - 1][2]
+                )
+                vt_idx = mesh.add_uv(
+                    mesh.uvs[b_i[1] - 1][0] if b_i[1] > 0 and b_i[1] <= len(mesh.uvs) else i / segments,
+                    mesh.uvs[b_i[1] - 1][1] if b_i[1] > 0 and b_i[1] <= len(mesh.uvs) else 0.0
+                )
+                # 存储: 顶点索引, UV索引, 法线索引(朝下)
+                bottom_cap_indices.append((v_idx, vt_idx, vn_down_idx))
+            
+            # 生成底部端盖三角面（使用朝下的法线）
             for i in range(segments):
                 next_i = (i + 1) % segments
-                b_i = bottom_ring[i]
-                b_next = bottom_ring[next_i]
-                mesh.add_face(v_center, b_i[0], b_next[0],
-                             vt_center, b_i[1], b_next[1],
-                             vn_center, b_i[2], b_next[2])
+                bc_i = bottom_cap_indices[i]
+                bc_next = bottom_cap_indices[next_i]
+                mesh.add_face(v_center, bc_i[0], bc_next[0],
+                             vt_center, bc_i[1], bc_next[1],
+                             vn_down_idx, vn_down_idx, vn_down_idx)
     
     # 返回生成的顶点数量
     if is_hollow:
