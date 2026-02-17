@@ -130,15 +130,42 @@ class Mesh:
         except ImportError as e:
             raise ImportError(f"USD库加载失败: {e}\n请确保 deps 目录包含 usd-core") from e
         
+        # 确保输出目录存在
+        # 将路径转换为绝对路径并规范化（USD需要正斜杠）
+        abs_filename = os.path.abspath(filename)
+        output_dir = os.path.dirname(abs_filename)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+            print(f"[INFO] 创建输出目录: {output_dir}")
+
+        # USD 在 Windows 上需要正斜杠路径
+        usd_filename = abs_filename.replace("\\", "/")
+
         # 创建舞台
-        stage = Usd.Stage.CreateNew(filename)
+        try:
+            stage = Usd.Stage.CreateNew(usd_filename)
+        except Exception as e:
+            print("[ERROR] 创建USD舞台失败")
+            print(f"[ERROR] 原始路径: {filename}")
+            print(f"[ERROR] USD路径: {usd_filename}")
+            print(f"[ERROR] 目录存在: {os.path.exists(output_dir)}")
+            # 尝试使用 ASCII 安全的方式打印错误
+            try:
+                err_str = str(e)
+                print(f"[ERROR] 错误信息: {err_str}")
+            except:
+                print("[ERROR] 无法获取错误详细信息（编码问题）")
+            raise RuntimeError(f"USD创建失败: {filename}") from None
         
         # 设置单位 (米)
         UsdGeom.SetStageMetersPerUnit(stage, 1.0)
         UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)
         
         # 创建根 prim（使用存档名）
-        root_name = mesh_prefix.replace(".", "_")
+        root_name = mesh_prefix.replace(".", "_").replace("-", "_").replace(" ", "_") if mesh_prefix else "Model"
+        # 确保 root_name 不以数字开头（USD prim 名称规则）
+        if root_name and root_name[0].isdigit():
+            root_name = "_" + root_name
         root_path = Sdf.Path(f"/{root_name}")
         root_prim = stage.DefinePrim(root_path, "Xform")
         stage.SetDefaultPrim(root_prim)
@@ -155,7 +182,7 @@ class Mesh:
         mesh_index = 0
         for mat_name, face_data in faces_by_material.items():
             # 网格体命名：直接使用材质名（清理后的）
-            mesh_name = mat_name.replace(" ", "_").replace("-", "_") if mat_name else f"Mesh_{mesh_index}"
+            mesh_name = mat_name.replace(" ", "_").replace("-", "_").replace(".", "_").replace("/", "_") if mat_name else f"Mesh_{mesh_index}"
             mesh_path = root_path.AppendChild(mesh_name)
             mesh_prim = UsdGeom.Mesh.Define(stage, mesh_path)
             
@@ -203,46 +230,29 @@ class Mesh:
                 local_faces.append(local_face)
             
             # 设置法线（faceVarying - 每个面顶点一个法线）
-            # 关键：同一顶点在不同面（侧面/端盖）使用不同法线，实现硬边效果
-            # 但同一零件内相同法线的顶点共享，实现平滑效果
+            # 关键：顶点位置共享（便于编辑），法线分离（保留锐边）
             if use_custom_normals and self.normals:
-                # 创建按零件和法线索引去重的顶点映射
-                # key: (global_vertex_idx, part_id, normal_idx) -> local_idx
-                vertex_normal_key_to_local = {}
-                local_vertices_with_normal = []
-                local_faces_with_normal = []
+                # 使用之前构建的 global_to_local 映射（按顶点+零件去重）
+                # 这样侧面和端盖共享同一个顶点位置
+
+                # 构建 faceVarying 法线数组（每个面顶点一个法线）
+                # 法线顺序与 face_vertex_indices 对应
                 face_varying_normals = []
-                
-                for face, face_ni, pid in zip(faces, normal_indices, part_ids):
-                    local_face = []
+                for face, face_ni in zip(faces, normal_indices):
                     for v_idx, ni in zip(face, face_ni):
-                        # 按 (顶点, 零件, 法线) 去重
-                        # 这样同一顶点不同法线会创建不同局部顶点
-                        key = (v_idx, pid, ni)
-                        if key not in vertex_normal_key_to_local:
-                            vertex_normal_key_to_local[key] = len(local_vertices_with_normal)
-                            local_vertices_with_normal.append(self.vertices[v_idx])
-                            # 存储法线值
-                            if 0 <= ni < len(self.normals):
-                                face_varying_normals.append(self.normals[ni])
-                            else:
-                                face_varying_normals.append((0.0, 1.0, 0.0))
-                        local_face.append(vertex_normal_key_to_local[key])
-                    local_faces_with_normal.append(tuple(local_face))
-                
-                # 更新顶点和面数据
-                local_vertices = local_vertices_with_normal
-                local_faces = local_faces_with_normal
-                mesh_prim.CreatePointsAttr(local_vertices)
-                
+                        if 0 <= ni < len(self.normals):
+                            face_varying_normals.append(self.normals[ni])
+                        else:
+                            face_varying_normals.append((0.0, 1.0, 0.0))
+
                 mesh_prim.CreateNormalsAttr(face_varying_normals)
                 mesh_prim.SetNormalsInterpolation(UsdGeom.Tokens.faceVarying)
             
             # 设置 UV（使用局部索引）
-            # UV也需要按 (顶点, 零件, 法线) 对应
+            # UV按 (顶点, 零件) 对应
             if self.uvs:
                 local_uvs = []
-                for (v_idx, pid, ni), local_idx in vertex_normal_key_to_local.items():
+                for (v_idx, pid), local_idx in global_to_local.items():
                     if v_idx < len(self.uvs):
                         local_uvs.append((local_idx, self.uvs[v_idx]))
                     else:
@@ -250,7 +260,7 @@ class Mesh:
                 # 按局部索引排序
                 local_uvs.sort(key=lambda x: x[0])
                 local_uvs = [uv for idx, uv in local_uvs]
-                
+
                 tex_coords = UsdGeom.PrimvarsAPI(mesh_prim).CreatePrimvar(
                     "st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex
                 )
@@ -270,8 +280,8 @@ class Mesh:
                 material = UsdShade.Material.Define(stage, mat_path)
                 
                 # 如果提供了材质数据，设置材质属性
-                if materials and mat_name in materials:
-                    mat_data = materials[mat_name]
+                if materials and mesh_name in materials:
+                    mat_data = materials[mesh_name]
                     # 创建 PBR 着色器 (Preview Surface)
                     shader_path = mat_path.AppendChild("PreviewSurface")
                     shader = UsdShade.Shader.Define(stage, shader_path)
@@ -1160,40 +1170,58 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
         # 计算法线 (基于缩放后的半径)
         cos_a = math.cos(angle)
         sin_a = math.sin(angle)
-        
-        # 底部侧面法线 (水平朝外，用于侧面)
-        if bottom_rx > 1e-6 and bottom_rz > 1e-6:
-            nbx = cos_a / bottom_rx
-            nbz = sin_a / bottom_rz
-            norm = math.sqrt(nbx**2 + nbz**2)
-            if norm > 0:
-                nbx /= norm
-                nbz /= norm
-        elif bottom_rx > 1e-6:
-            nbx, nbz = 0, (1.0 if sin_a > 0 else -1.0)
-        elif bottom_rz > 1e-6:
-            nbx, nbz = (1.0 if cos_a > 0 else -1.0), 0
+
+        # 计算锥形斜率用于侧面法线
+        # 侧面法线应该垂直于锥面斜线
+        height = params.length  # 圆柱高度
+
+        # 计算斜率 (半径随高度的变化率)
+        # slope > 0 表示向上扩张, slope < 0 表示向上收窄
+        if height > 0:
+            slope_x = (top_rx - bottom_rx) / height
+            slope_z = (top_rz - bottom_rz) / height
         else:
+            slope_x = slope_z = 0.0
+
+        # 计算椭圆锥侧面法线 (基于隐式函数梯度)
+        # 椭圆锥表面: (x/rx(y))^2 + (z/rz(y))^2 = 1
+        # 法线方向 = 梯度方向
+        # 在底部边缘: nx = bottom_rz*cos(a), nz = bottom_rx*sin(a)
+        #             ny = -bottom_rz*slope_x*cos^2(a) - bottom_rx*slope_z*sin^2(a)
+
+        if bottom_rx > 1e-6 and bottom_rz > 1e-6:
+            # 计算未归一化的法线分量
+            nbx = bottom_rz * cos_a
+            nbz = bottom_rx * sin_a
+            # Y分量: 负号因为slope为负时(向上收窄),法线应该向上
+            nby = -bottom_rz * slope_x * cos_a * cos_a - bottom_rx * slope_z * sin_a * sin_a
+        elif bottom_rx > 1e-6:
+            # 只有X方向有半径 (退化为平板或线条)
+            nbx = 0.0
+            nbz = (1.0 if sin_a > 0 else -1.0) if bottom_rz <= 1e-6 else bottom_rx * sin_a
+            nby = -bottom_rx * slope_z * sin_a * sin_a
+        elif bottom_rz > 1e-6:
+            # 只有Z方向有半径
+            nbx = (1.0 if cos_a > 0 else -1.0) if bottom_rx <= 1e-6 else bottom_rz * cos_a
+            nbz = 0.0
+            nby = -bottom_rz * slope_x * cos_a * cos_a
+        else:
+            # 退化为点
             nbx, nbz = cos_a, sin_a
-        normal_b_side = np.array([nbx, 0, nbz])
+            nby = 0.0
+
+        # 归一化法线
+        norm = math.sqrt(nbx**2 + nby**2 + nbz**2)
+        if norm > 0:
+            nbx /= norm
+            nby /= norm
+            nbz /= norm
+        normal_b_side = np.array([nbx, nby, nbz])
         world_normal_b_side = R @ normal_b_side
         vn_b_side_idx = mesh.add_normal(world_normal_b_side[0], world_normal_b_side[1], world_normal_b_side[2])
         
-        # 顶部侧面法线 (水平朝外，用于侧面)
-        if top_rx > 1e-6 and top_rz > 1e-6:
-            ntx = cos_a / top_rx
-            ntz = sin_a / top_rz
-            norm = math.sqrt(ntx**2 + ntz**2)
-            if norm > 0:
-                ntx /= norm
-                ntz /= norm
-        elif top_rx > 1e-6:
-            ntx, ntz = 0, (1.0 if sin_a > 0 else -1.0)
-        elif top_rz > 1e-6:
-            ntx, ntz = (1.0 if cos_a > 0 else -1.0), 0
-        else:
-            ntx, ntz = cos_a, sin_a
-        normal_t_side = np.array([ntx, 0, ntz])
+        # 顶部侧面法线 (与底部相同，确保侧面平滑)
+        normal_t_side = np.array([nbx, nby, nbz])  # 复用底部法线，保持侧面平滑
         world_normal_t_side = R @ normal_t_side
         vn_t_side_idx = mesh.add_normal(world_normal_t_side[0], world_normal_t_side[1], world_normal_t_side[2])
         
@@ -1228,8 +1256,9 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             world_ti = R @ local_ti + pos
             
             # 内圈法线（朝内，与外圈相反）
-            normal_bi = np.array([-nbx, 0, -nbz])
-            normal_ti = np.array([-ntx, 0, -ntz])
+            # 内圈和外圈在同一锥面上，使用相同的法线方向（只是朝内）
+            normal_bi = np.array([-nbx, -nby, -nbz])
+            normal_ti = np.array([-nbx, -nby, -nbz])
             world_normal_bi = R @ normal_bi
             world_normal_ti = R @ normal_ti
             
