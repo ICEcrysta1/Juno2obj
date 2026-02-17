@@ -495,15 +495,14 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
         if t < 0.99:  # 非尖点部分
             # 使用自定义曲线来匹配参考文件的半径变化
             # 调整系数以匹配: t=0.2->0.958, t=0.4->0.863, t=0.6->0.649, t=0.8->0.351
-            if t <= 0.001:
-                radius_ratio = 1.0
-            else:
-                # 使用 1 - t^2.1 曲线，平衡各层误差
-                ease_t = math.pow(t, 2.1)
-                radius_ratio = params.bottom_scale_x * (1.0 - ease_t) + params.top_scale_x * ease_t
+            # 使用 1 - t^2.1 曲线，平衡各层误差
+            ease_t = math.pow(t, 2.1)
+            radius_ratio_x = params.bottom_scale_x * (1.0 - ease_t) + params.top_scale_x * ease_t
+            radius_ratio_z = params.bottom_scale_z * (1.0 - ease_t) + params.top_scale_z * ease_t
         else:
             # 尖点
-            radius_ratio = 0.0
+            radius_ratio_x = 0.0
+            radius_ratio_z = 0.0
         
         # 当前层的偏移（从底部到顶部渐变）
         current_offset_x = params.offset_x * t
@@ -527,8 +526,8 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
         current_clamp = tuple(current_clamp)
         
         # 计算当前层的有效半径
-        current_rx = params.radius_x * radius_ratio
-        current_rz = params.radius_z * radius_ratio
+        current_rx = params.radius_x * radius_ratio_x
+        current_rz = params.radius_z * radius_ratio_z
         
         # 生成原始坐标
         raw_coords = []
@@ -538,8 +537,8 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
             # 获取截面形状点
             x, z = get_rounded_rect_point(angle, params.radius_x, params.radius_z,
                                           current_corners, current_deformation)
-            x *= radius_ratio
-            z *= radius_ratio
+            x *= radius_ratio_x
+            z *= radius_ratio_z
             x += current_offset_x
             z += current_offset_z
             raw_coords.append((x, y, z))
@@ -561,7 +560,7 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
         ring_verts = []
         
         # 检查是否是尖点（半径为0）
-        is_tip = radius_ratio < 1e-6
+        is_tip = radius_ratio_x < 1e-6 and radius_ratio_z < 1e-6
         
         if is_tip:
             # 尖点：只生成一个顶点，所有角度共享
@@ -625,9 +624,9 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
                 if t < 0.99:
                     dt = 0.01
                     t_next = min(t + dt, 0.99)
-                    ease_t_next = t_next * t_next * (3.0 - 2.0 * t_next)
-                    radius_next = params.bottom_scale_x * (1.0 - ease_t_next) + params.top_scale_x * ease_t_next
-                    dr = radius_next - radius_ratio
+                    ease_t_next = math.pow(t_next, 2.1)
+                    radius_next_x = params.bottom_scale_x * (1.0 - ease_t_next) + params.top_scale_x * ease_t_next
+                    dr = radius_next_x - radius_ratio_x
                     # 斜率 = dr/dt，法线Y分量与斜率成正比
                     slope = dr / dt
                     ny = -slope * math.sqrt(nx**2 + nz**2)
