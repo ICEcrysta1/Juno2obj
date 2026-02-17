@@ -133,8 +133,9 @@ class Mesh:
         UsdGeom.SetStageMetersPerUnit(stage, 1.0)
         UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)
         
-        # 创建根 prim
-        root_path = Sdf.Path("/Root")
+        # 创建根 prim（使用存档名）
+        root_name = mesh_prefix.replace(".", "_")
+        root_path = Sdf.Path(f"/{root_name}")
         root_prim = stage.DefinePrim(root_path, "Xform")
         stage.SetDefaultPrim(root_prim)
         
@@ -149,9 +150,8 @@ class Mesh:
         
         mesh_index = 0
         for mat_name, face_data in faces_by_material.items():
-            # 网格体命名：[存档名]_[材质名]
-            clean_mat_name = mat_name.replace(" ", "_").replace("-", "_") if mat_name else "default"
-            mesh_name = f"{mesh_prefix}_{clean_mat_name}"
+            # 网格体命名：直接使用材质名（清理后的）
+            mesh_name = mat_name.replace(" ", "_").replace("-", "_") if mat_name else f"Mesh_{mesh_index}"
             mesh_path = root_path.AppendChild(mesh_name)
             mesh_prim = UsdGeom.Mesh.Define(stage, mesh_path)
             
