@@ -1307,8 +1307,8 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
         
         print(f"处理部件 {part_id} ({part_type}) at {position}, rot {rotation}, material={mat_idx}")
         
-        if part_type == 'Fuselage1':
-            # 找到Fuselage子元素
+        if part_type in ('Fuselage1', 'Strut1'):
+            # 找到Fuselage子元素（Strut1和Fuselage1使用相同的Fuselage参数结构）
             fuselage = part.find('Fuselage')
             if fuselage is not None:
                 params = parse_fuselage_params(fuselage)
@@ -1324,7 +1324,12 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
                 if config is not None and 'partScale' in config.attrib:
                     params.part_scale = parse_vector(config.attrib['partScale'])
                 
-                print(f"  Fuselage参数: length={params.length}, "
+                # Strut1 默认圆角为 0.5（半圆滑），游戏不会记录默认值
+                if part_type == 'Strut1' and 'cornerRadiuses' not in fuselage.attrib:
+                    params.corner_radiuses = (0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5)
+                
+                type_name = "Strut" if part_type == 'Strut1' else "Fuselage"
+                print(f"  {type_name}参数: length={params.length}, "
                       f"radius=({params.radius_x}, {params.radius_z}), "
                       f"offset=({params.offset_x}, {params.offset_y}, {params.offset_z}), "
                       f"topScale=({params.top_scale_x}, {params.top_scale_z}), "
@@ -1340,7 +1345,7 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
                 )
                 print(f"  生成了 {vertex_count} 个顶点")
             else:
-                print(f"  警告: Fuselage1部件没有Fuselage子元素")
+                print(f"  警告: {part_type}部件没有Fuselage子元素")
         
         elif part_type == 'Inlet1':
             # 找到Fuselage子元素（Inlet1也有Fuselage参数）
