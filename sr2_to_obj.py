@@ -105,12 +105,13 @@ class Mesh:
         self.add_face(v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat)
         self.add_face(v1, v3, v4, vt1, vt3, vt4, vn1, vn3, vn4, mat)
     
-    def write_usd(self, filename: str, materials: dict = None):
+    def write_usd(self, filename: str, materials: dict = None, use_custom_normals: bool = True):
         """写入USD文件 (ASCII格式)
         
         参数:
             filename: 输出文件路径
             materials: 材质字典，键为材质名称，值为 Material 对象
+            use_custom_normals: 是否使用代码计算的自定义法线，False则让渲染器自动计算
         """
         try:
             import sys
@@ -153,8 +154,8 @@ class Mesh:
             # 设置顶点
             mesh_prim.CreatePointsAttr(self.vertices)
             
-            # 设置法线
-            if self.normals:
+            # 设置法线（可选）
+            if use_custom_normals and self.normals:
                 mesh_prim.CreateNormalsAttr(self.normals)
                 mesh_prim.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
             
@@ -1344,16 +1345,17 @@ def get_material_index(part_elem: ET.Element) -> int:
 
 def convert_sr2_to_obj(xml_file: str, obj_file: str, 
                         default_radius_x: float = 1.0,
-                        default_radius_z: float = 1.0):
+                        default_radius_z: float = 1.0,
+                        use_custom_normals: bool = True):
     """
-    将SimpleRockets 2的XML转换为OBJ/USD文件
+    将SimpleRockets 2的XML转换为USD文件
     
     参数:
         xml_file: 输入XML文件路径
-        obj_file: 输出OBJ/USD文件路径
+        obj_file: 输出USD文件路径
         default_radius_x: 默认椭圆短边半径 (X轴)
         default_radius_z: 默认椭圆长边半径 (Z轴)
-        default_length: 默认圆柱长度
+        use_custom_normals: 是否使用代码计算的自定义法线
     """
     import os
     
@@ -1561,7 +1563,7 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
         materials_dict[clean_name] = mat
     
     # 写入USD文件
-    mesh.write_usd(obj_file, materials_dict)
+    mesh.write_usd(obj_file, materials_dict, use_custom_normals)
     print(f"\n模型已导出到: {obj_file}")
     print(f"总顶点数: {len(mesh.vertices)}")
     print(f"总面数: {len(mesh.faces)}")
@@ -1580,11 +1582,20 @@ def main():
     # 确保 Output 文件夹存在
     os.makedirs(output_dir, exist_ok=True)
     
+    # 解析命令行参数
+    use_custom_normals = True
+    args = sys.argv.copy()
+    
+    if '--no-normals' in args:
+        use_custom_normals = False
+        args.remove('--no-normals')
+        print("[提示] 使用自动计算法线（不导出自定义法线）")
+    
     # 命令行参数处理
-    if len(sys.argv) >= 3:
+    if len(args) >= 3:
         # 如果提供的是完整路径，直接使用；否则从 Input 文件夹查找
-        xml_input = sys.argv[1]
-        obj_input = sys.argv[2]
+        xml_input = args[1]
+        obj_input = args[2]
         
         if os.path.isabs(xml_input) or os.path.dirname(xml_input):
             xml_file = xml_input
@@ -1612,7 +1623,8 @@ def main():
         xml_file=xml_file,
         obj_file=obj_file,
         default_radius_x=1.0,   # 基础椭圆短边半径
-        default_radius_z=1.0    # 基础椭圆长边半径
+        default_radius_z=1.0,   # 基础椭圆长边半径
+        use_custom_normals=use_custom_normals
     )
 
 
