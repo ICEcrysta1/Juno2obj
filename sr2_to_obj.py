@@ -1347,8 +1347,8 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
             else:
                 print(f"  警告: {part_type}部件没有Fuselage子元素")
         
-        elif part_type == 'Inlet1':
-            # 找到Fuselage子元素（Inlet1也有Fuselage参数）
+        elif part_type in ('Inlet1', 'FairingBase1', 'Fairing1'):
+            # 找到Fuselage子元素（Inlet1、FairingBase1、Fairing1都有Fuselage参数）
             fuselage = part.find('Fuselage')
             if fuselage is not None:
                 params = parse_fuselage_params(fuselage)
@@ -1363,7 +1363,8 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
                 if config is not None and 'partScale' in config.attrib:
                     params.part_scale = parse_vector(config.attrib['partScale'])
                 
-                print(f"  Inlet参数: length={params.length}, "
+                type_name = part_type.replace('1', '')
+                print(f"  {type_name}参数: length={params.length}, "
                       f"radius=({params.radius_x}, {params.radius_z}), "
                       f"offset=({params.offset_x}, {params.offset_y}, {params.offset_z}), "
                       f"topScale=({params.top_scale_x}, {params.top_scale_z}), "
@@ -1374,13 +1375,13 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
                 # 设置当前材质
                 mesh.set_material(mat_name)
                 
-                # 生成空心圆柱（Inlet）- 使用 inlet_wall_thickness 参数
+                # 生成空心圆柱（Inlet/Fairing模式）- 使用 inlet_wall_thickness 参数
                 vertex_count = generate_ellipse_cylinder(
                     mesh, params, position, rotation, segments=24, inlet_wall_thickness=0.045
                 )
                 print(f"  生成了 {vertex_count} 个顶点")
             else:
-                print(f"  警告: Inlet1部件没有Fuselage子元素")
+                print(f"  警告: {part_type}部件没有Fuselage子元素")
         
         elif part_type == 'NoseCone1':
             # NoseCone1: 球形尖圆锥体，中间有5段细分
