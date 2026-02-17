@@ -105,13 +105,14 @@ class Mesh:
         self.add_face(v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat)
         self.add_face(v1, v3, v4, vt1, vt3, vt4, vn1, vn3, vn4, mat)
     
-    def write_usd(self, filename: str, materials: dict = None, use_custom_normals: bool = True):
+    def write_usd(self, filename: str, materials: dict = None, use_custom_normals: bool = True, mesh_prefix: str = "Mesh"):
         """写入USD文件 (ASCII格式)
         
         参数:
             filename: 输出文件路径
             materials: 材质字典，键为材质名称，值为 Material 对象
             use_custom_normals: 是否使用代码计算的自定义法线，False则让渲染器自动计算
+            mesh_prefix: 网格体名称前缀（建议使用"存档名_材质名"格式）
         """
         try:
             import sys
@@ -148,7 +149,9 @@ class Mesh:
         
         mesh_index = 0
         for mat_name, face_data in faces_by_material.items():
-            mesh_name = f"Mesh_{mesh_index}" if not mat_name else mat_name.replace(" ", "_").replace("-", "_")
+            # 网格体命名：[存档名]_[材质名]
+            clean_mat_name = mat_name.replace(" ", "_").replace("-", "_") if mat_name else "default"
+            mesh_name = f"{mesh_prefix}_{clean_mat_name}"
             mesh_path = root_path.AppendChild(mesh_name)
             mesh_prim = UsdGeom.Mesh.Define(stage, mesh_path)
             
@@ -1378,7 +1381,8 @@ def get_material_index(part_elem: ET.Element) -> int:
 def convert_sr2_to_obj(xml_file: str, obj_file: str, 
                         default_radius_x: float = 1.0,
                         default_radius_z: float = 1.0,
-                        use_custom_normals: bool = True):
+                        use_custom_normals: bool = True,
+                        mesh_prefix: str = "Mesh"):
     """
     将SimpleRockets 2的XML转换为USD文件
     
@@ -1388,6 +1392,7 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
         default_radius_x: 默认椭圆短边半径 (X轴)
         default_radius_z: 默认椭圆长边半径 (Z轴)
         use_custom_normals: 是否使用代码计算的自定义法线
+        mesh_prefix: 网格体名称前缀（建议使用存档名）
     """
     import os
     
@@ -1595,7 +1600,7 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
         materials_dict[clean_name] = mat
     
     # 写入USD文件
-    mesh.write_usd(obj_file, materials_dict, use_custom_normals)
+    mesh.write_usd(obj_file, materials_dict, use_custom_normals, mesh_prefix)
     print(f"\n模型已导出到: {obj_file}")
     print(f"总顶点数: {len(mesh.vertices)}")
     print(f"总面数: {len(mesh.faces)}")
@@ -1649,6 +1654,11 @@ def main():
         print(f"请将 XML 文件放入 Input 文件夹: {input_dir}")
         sys.exit(1)
     
+    # 从XML文件名提取存档名作为网格体前缀
+    import os
+    xml_basename = os.path.splitext(os.path.basename(xml_file))[0]
+    mesh_prefix = xml_basename.replace(" ", "_").replace("-", "_")
+    
     # 转换XML到USD
     # 长度从 offset_y 自动计算: 长度 = offset_y * 2
     convert_sr2_to_obj(
@@ -1656,7 +1666,8 @@ def main():
         obj_file=obj_file,
         default_radius_x=1.0,   # 基础椭圆短边半径
         default_radius_z=1.0,   # 基础椭圆长边半径
-        use_custom_normals=use_custom_normals
+        use_custom_normals=use_custom_normals,
+        mesh_prefix=mesh_prefix
     )
 
 
