@@ -4,9 +4,13 @@
 
 ## 功能特性
 
-- 支持 **Fuselage1**（机身/燃料箱）- 椭圆截面圆柱体
+- 支持 **Fuselage1**（机身/燃料箱）- 实心椭圆截面圆柱体
+- 支持 **Strut1**（支架/连接杆）- 实心圆柱体（默认半圆滑）
 - 支持 **Inlet1**（进气口）- 空心圆柱体
-- 支持 **NoseCone1**（鼻锥）- 冯·卡门曲线锥形
+- 支持 **FairingBase1**（整流罩底座）- 空心圆柱体
+- 支持 **Fairing1**（整流罩筒）- 空心圆柱体
+- 支持 **NoseCone1**（鼻锥）
+- 支持 **FairingNoseCone1**（整流罩鼻锥）- 空心鼻锥
 - 完整支持 SR2 的形变参数：
   - offset（偏移）
   - topScale/bottomScale（顶部/底部缩放）
@@ -139,7 +143,7 @@ python sr2_to_obj.py "F:/My Crafts/ship.xml" "F:/My Models/ship.obj"
 
 1. **XML 来源**：必须从 SimpleRockets 2 导出 `.xml` 格式的飞船设计文件
 2. **材质**：目前支持基础颜色、金属度和粗糙度，不支持纹理贴图
-3. **部件类型**：目前仅支持 Fuselage1、Inlet1、NoseCone1，其他部件会被跳过
+3. **部件类型**：目前支持 Fuselage1、Strut1、Inlet1、FairingBase1、Fairing1、NoseCone1、FairingNoseCone1，其他部件会被跳过
 4. **文件编码**：XML 文件使用 UTF-8 编码
 
 ## 故障排除
