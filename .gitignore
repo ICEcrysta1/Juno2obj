@@ -10,3 +10,6 @@ __pycache__/*
 # Dependencies
 deps/
 *.whl
+
+# Project private docs
+AGENTS.md
