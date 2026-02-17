@@ -858,7 +858,9 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
             # 空心模式：生成环形端盖
             bottom_inner_ring = inner_ring_indices[0]
             normal_down = R @ np.array([0, -1, 0])
+            normal_up = R @ np.array([0, 1, 0])
             vn_down_idx = mesh.add_normal(normal_down[0], normal_down[1], normal_down[2])
+            vn_up_idx = mesh.add_normal(normal_up[0], normal_up[1], normal_up[2])
             
             for i in range(segments):
                 next_i = (i + 1) % segments
@@ -868,12 +870,13 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
                 bi_i = bottom_inner_ring[i]
                 
                 # 底部环形端盖（两个三角面）
-                mesh.add_face(bo_i[0], bi_i[0], bi_next[0],
-                             bo_i[1], bi_i[1], bi_next[1],
-                             vn_down_idx, vn_down_idx, vn_down_idx)
-                mesh.add_face(bo_i[0], bi_next[0], bo_next[0],
-                             bo_i[1], bi_next[1], bo_next[1],
-                             vn_down_idx, vn_down_idx, vn_down_idx)
+                # 底部法线朝下：从底部看是逆时针 (bo_i -> bo_next -> bi_next -> bi_i)
+                mesh.add_face(bo_i[0], bo_next[0], bi_next[0],
+                             bo_i[1], bo_next[1], bi_next[1],
+                             vn_down_idx, vn_down_idx, vn_up_idx)
+                mesh.add_face(bo_i[0], bi_next[0], bi_i[0],
+                             bo_i[1], bi_next[1], bi_i[1],
+                             vn_down_idx, vn_up_idx, vn_up_idx)
         else:
             # 实心模式：生成实心端盖
             # 计算底部中心点
@@ -1179,15 +1182,15 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             v_idx_bi = mesh.add_vertex(world_bi[0], world_bi[1], world_bi[2])
             vn_idx_bi = mesh.add_normal(world_normal_bi[0], world_normal_bi[1], world_normal_bi[2])
             vt_idx_bi = mesh.add_uv(u, 0.0)
-            # 内圈端盖法线也是朝下（统一）
-            bottom_inner_indices.append((v_idx_bi, vt_idx_bi, vn_idx_bi, vn_down_idx))
+            # 内圈端盖法线朝上（指向空心内部）
+            bottom_inner_indices.append((v_idx_bi, vt_idx_bi, vn_idx_bi, vn_up_idx))
             
             # 添加顶部内圈顶点
             v_idx_ti = mesh.add_vertex(world_ti[0], world_ti[1], world_ti[2])
             vn_idx_ti = mesh.add_normal(world_normal_ti[0], world_normal_ti[1], world_normal_ti[2])
             vt_idx_ti = mesh.add_uv(u, 1.0)
-            # 内圈端盖法线也是朝上（统一）
-            top_inner_indices.append((v_idx_ti, vt_idx_ti, vn_idx_ti, vn_up_idx))
+            # 内圈端盖法线朝下（指向空心内部）
+            top_inner_indices.append((v_idx_ti, vt_idx_ti, vn_idx_ti, vn_down_idx))
     
     # 生成侧面四边形
     for i in range(segments):
@@ -1242,12 +1245,13 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             
             # 底部环形端盖（两个三角面）
             # 外圈使用端盖法线(索引3)，内圈也使用端盖法线(索引3)
-            mesh.add_face(bo_i[0], bi_i[0], bi_next[0],
-                         bo_i[1], bi_i[1], bi_next[1],
-                         bo_i[3], bi_i[3], bi_next[3])
-            mesh.add_face(bo_i[0], bi_next[0], bo_next[0],
-                         bo_i[1], bi_next[1], bo_next[1],
-                         bo_i[3], bi_next[3], bo_next[3])
+            # 底部法线朝下：从底部看是逆时针 (bo_i -> bo_next -> bi_next -> bi_i)
+            mesh.add_face(bo_i[0], bo_next[0], bi_next[0],
+                         bo_i[1], bo_next[1], bi_next[1],
+                         bo_i[3], bo_next[3], bi_next[3])
+            mesh.add_face(bo_i[0], bi_next[0], bi_i[0],
+                         bo_i[1], bi_next[1], bi_i[1],
+                         bo_i[3], bi_next[3], bi_i[3])
         
         for i in range(segments):
             next_i = (i + 1) % segments
@@ -1257,12 +1261,13 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             ti_i = top_inner_indices[i]
             
             # 顶部环形端盖（两个三角面）
-            mesh.add_face(to_i[0], to_next[0], ti_next[0],
-                         to_i[1], to_next[1], ti_next[1],
-                         to_i[3], to_next[3], ti_next[3])
-            mesh.add_face(to_i[0], ti_next[0], ti_i[0],
-                         to_i[1], ti_next[1], ti_i[1],
-                         to_i[3], ti_next[3], ti_i[3])
+            # 顶部法线朝上：从顶部看是逆时针 (to_i -> ti_i -> ti_next -> to_next)
+            mesh.add_face(to_i[0], ti_i[0], ti_next[0],
+                         to_i[1], ti_i[1], ti_next[1],
+                         to_i[3], ti_i[3], ti_next[3])
+            mesh.add_face(to_i[0], ti_next[0], to_next[0],
+                         to_i[1], ti_next[1], to_next[1],
+                         to_i[3], ti_next[3], to_next[3])
         
         return len(bottom_indices) * 4
     else:
