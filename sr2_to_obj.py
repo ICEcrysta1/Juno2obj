@@ -427,7 +427,8 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
                         position: Tuple[float, float, float],
                         rotation: Tuple[float, float, float],
                         segments: int = 24,
-                        subdivisions: int = 5) -> int:
+                        subdivisions: int = 5,
+                        wall_thickness: float = 0.0) -> int:
     """
     生成NoseCone（冯·卡门曲线锥形）
     
@@ -436,11 +437,17 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
     - 底部保持圆柱形状，顶部逐渐变细到尖点
     - 使用平滑曲线（类似冯·卡门曲线）而非线性插值
     - 支持所有Fuselage的形变参数
+    - 支持空心结构（FairingNoseCone1模式）
     
     坐标系:
     - 圆锥沿Y轴延伸（从 -length/2 到 +length/2）
     - 底部在下方，顶部（尖端）在上方
+    
+    参数:
+        wall_thickness: 如果 > 0，生成空心鼻锥（FairingNoseCone1），值为壁厚
     """
+    is_hollow = wall_thickness > 1e-6
+    
     R = rotation_matrix(rotation)
     pos = np.array(position)
     
@@ -478,8 +485,10 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
     # 共 subdivisions+1 个截面
     num_rings = subdivisions + 1
     
-    # 存储每一层的顶点索引
+    # 存储每一层的顶点索引（外层）
     ring_indices = []  # 每个元素是 [(v_idx, vt_idx, vn_idx), ...]
+    # 存储每一层的内层顶点索引（空心模式）
+    inner_ring_indices = [] if is_hollow else None
     
     # 生成每一层的截面
     for ring in range(num_rings):
@@ -558,6 +567,7 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
         
         # 变换到世界坐标并添加顶点
         ring_verts = []
+        inner_ring_verts = [] if is_hollow else None
         
         # 检查是否是尖点（半径为0）
         is_tip = radius_ratio_x < 1e-6 and radius_ratio_z < 1e-6
@@ -590,8 +600,23 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
             # 为所有角度重复相同的顶点索引
             for i in range(segments):
                 ring_verts.append((v_idx, vt_idx, vn_idx))
+                if is_hollow:
+                    inner_ring_verts.append((v_idx, vt_idx, vn_idx))
         else:
             # 正常截面：为每个角度生成顶点
+            # 如果是空心模式，计算内层坐标
+            if is_hollow:
+                inner_coords = []
+                for i in range(segments):
+                    x, y_local, z = squeezed_coords[i]
+                    # 计算到中心的距离
+                    dist = math.sqrt(x**2 + z**2)
+                    if dist > wall_thickness:
+                        ratio = (dist - wall_thickness) / dist
+                        inner_coords.append((x * ratio, y_local, z * ratio))
+                    else:
+                        inner_coords.append((0, y_local, 0))
+            
             for i in range(segments):
                 x, y_local, z = squeezed_coords[i]
                 
@@ -642,13 +667,38 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
                 u = i / segments
                 v = t
                 
-                # 添加顶点到网格
+                # 添加外层顶点到网格
                 v_idx = mesh.add_vertex(world_pos[0], world_pos[1], world_pos[2])
                 vn_idx = mesh.add_normal(world_normal[0], world_normal[1], world_normal[2])
                 vt_idx = mesh.add_uv(u, v)
                 ring_verts.append((v_idx, vt_idx, vn_idx))
+                
+                # 如果是空心模式，添加内层顶点
+                if is_hollow:
+                    xi, yi_local, zi = inner_coords[i]
+                    
+                    # 应用竖切斜率到内层
+                    zi_normalized = zi / (current_rz * scale_z) if current_rz * scale_z > 0.001 else 0
+                    cut_depth_i = 2 * params.offset_y * vertical_shear * t
+                    y_final_i = yi_local + cut_depth_i * (zi_normalized - 1) / 2
+                    
+                    # 变换到世界坐标
+                    local_pos_i = np.array([xi, y_final_i, zi])
+                    world_pos_i = R @ local_pos_i + pos
+                    
+                    # 内层法线（朝内，与外圈相反）
+                    normal_i = np.array([-nx, -ny, -nz])
+                    world_normal_i = R @ normal_i
+                    
+                    # 添加内层顶点
+                    v_idx_i = mesh.add_vertex(world_pos_i[0], world_pos_i[1], world_pos_i[2])
+                    vn_idx_i = mesh.add_normal(world_normal_i[0], world_normal_i[1], world_normal_i[2])
+                    vt_idx_i = mesh.add_uv(u, v)
+                    inner_ring_verts.append((v_idx_i, vt_idx_i, vn_idx_i))
         
         ring_indices.append(ring_verts)
+        if is_hollow:
+            inner_ring_indices.append(inner_ring_verts)
     
     # 生成侧面（四边形网格）
     for ring in range(subdivisions):
@@ -672,34 +722,82 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
                          curr_i[1], next_next[1], next_i_vert[1],
                          curr_i[2], next_next[2], next_i_vert[2])
     
+    # 空心模式：生成内侧面
+    if is_hollow:
+        for ring in range(subdivisions):
+            current_ring = inner_ring_indices[ring]
+            next_ring = inner_ring_indices[ring + 1]
+            
+            for i in range(segments):
+                next_i = (i + 1) % segments
+                
+                # 当前四边形的四个顶点（内侧面法线朝内，面的顺序与外侧面相反）
+                curr_i = current_ring[i]
+                curr_next = current_ring[next_i]
+                next_next = next_ring[next_i]
+                next_i_vert = next_ring[i]
+                
+                # 分解为两个三角面（注意顶点顺序与外侧面相反）
+                mesh.add_face(curr_i[0], next_i_vert[0], next_next[0],
+                             curr_i[1], next_i_vert[1], next_next[1],
+                             curr_i[2], next_i_vert[2], next_next[2])
+                mesh.add_face(curr_i[0], next_next[0], curr_next[0],
+                             curr_i[1], next_next[1], curr_next[1],
+                             curr_i[2], next_next[2], curr_next[2])
+    
     # 生成底部端盖（如果是闭合的）
     if params.bottom_scale_x > 1e-6 or params.bottom_scale_z > 1e-6:
         bottom_ring = ring_indices[0]
         
-        # 计算底部中心点
-        center_y = -half_len * scale_y
-        center_x = -params.offset_x * scale_x
-        center_z = -params.offset_z * scale_z
-        center_local = np.array([center_x, center_y, center_z])
-        center_world = R @ center_local + pos
-        
-        normal_down = R @ np.array([0, -1, 0])
-        v_center = mesh.add_vertex(center_world[0], center_world[1], center_world[2])
-        vn_center = mesh.add_normal(normal_down[0], normal_down[1], normal_down[2])
-        vt_center = mesh.add_uv(0.5, 0.0)
-        
-        for i in range(segments):
-            next_i = (i + 1) % segments
-            b_i = bottom_ring[i]
-            b_next = bottom_ring[next_i]
-            mesh.add_face(v_center, b_next[0], b_i[0],
-                         vt_center, b_next[1], b_i[1],
-                         vn_center, b_next[2], b_i[2])
+        if is_hollow:
+            # 空心模式：生成环形端盖
+            bottom_inner_ring = inner_ring_indices[0]
+            normal_down = R @ np.array([0, -1, 0])
+            vn_down_idx = mesh.add_normal(normal_down[0], normal_down[1], normal_down[2])
+            
+            for i in range(segments):
+                next_i = (i + 1) % segments
+                bo_i = bottom_ring[i]
+                bo_next = bottom_ring[next_i]
+                bi_next = bottom_inner_ring[next_i]
+                bi_i = bottom_inner_ring[i]
+                
+                # 底部环形端盖（两个三角面）
+                mesh.add_face(bo_i[0], bo_next[0], bi_next[0],
+                             bo_i[1], bo_next[1], bi_next[1],
+                             vn_down_idx, vn_down_idx, vn_down_idx)
+                mesh.add_face(bo_i[0], bi_next[0], bi_i[0],
+                             bo_i[1], bi_next[1], bi_i[1],
+                             vn_down_idx, vn_down_idx, vn_down_idx)
+        else:
+            # 实心模式：生成实心端盖
+            # 计算底部中心点
+            center_y = -half_len * scale_y
+            center_x = -params.offset_x * scale_x
+            center_z = -params.offset_z * scale_z
+            center_local = np.array([center_x, center_y, center_z])
+            center_world = R @ center_local + pos
+            
+            normal_down = R @ np.array([0, -1, 0])
+            v_center = mesh.add_vertex(center_world[0], center_world[1], center_world[2])
+            vn_center = mesh.add_normal(normal_down[0], normal_down[1], normal_down[2])
+            vt_center = mesh.add_uv(0.5, 0.0)
+            
+            for i in range(segments):
+                next_i = (i + 1) % segments
+                b_i = bottom_ring[i]
+                b_next = bottom_ring[next_i]
+                mesh.add_face(v_center, b_next[0], b_i[0],
+                             vt_center, b_next[1], b_i[1],
+                             vn_center, b_next[2], b_i[2])
     
     # 返回生成的顶点数量
-    total_verts = num_rings * segments
-    if params.bottom_scale_x > 1e-6 or params.bottom_scale_z > 1e-6:
-        total_verts += 1  # 底部中心点
+    if is_hollow:
+        total_verts = num_rings * segments * 2  # 内外两层
+    else:
+        total_verts = num_rings * segments
+        if params.bottom_scale_x > 1e-6 or params.bottom_scale_z > 1e-6:
+            total_verts += 1  # 底部中心点
     return total_verts
 
 
@@ -1416,6 +1514,41 @@ def convert_sr2_to_obj(xml_file: str, obj_file: str,
                 print(f"  生成了 {vertex_count} 个顶点")
             else:
                 print(f"  警告: NoseCone1部件没有Fuselage子元素")
+        
+        elif part_type == 'FairingNoseCone1':
+            # FairingNoseCone1: 空心鼻锥（整流罩鼻锥），与NoseCone1形状相同但是内外双层
+            fuselage = part.find('Fuselage')
+            if fuselage is not None:
+                params = parse_fuselage_params(fuselage)
+                
+                # 使用默认参数
+                params.radius_x = default_radius_x
+                params.radius_z = default_radius_z
+                params.length = params.offset_y * 2
+                
+                # 从Config元素解析partScale
+                config = part.find('Config')
+                if config is not None and 'partScale' in config.attrib:
+                    params.part_scale = parse_vector(config.attrib['partScale'])
+                
+                print(f"  FairingNoseCone参数: length={params.length}, "
+                      f"radius=({params.radius_x}, {params.radius_z}), "
+                      f"offset=({params.offset_x}, {params.offset_y}, {params.offset_z}), "
+                      f"topScale=({params.top_scale_x}, {params.top_scale_z}), "
+                      f"bottomScale=({params.bottom_scale_x}, {params.bottom_scale_z}), "
+                      f"partScale=({params.part_scale[0]}, {params.part_scale[1]}, {params.part_scale[2]}), "
+                      f"wall=0.045")
+                
+                # 设置当前材质
+                mesh.set_material(mat_name)
+                
+                # 生成空心NoseCone（5段细分，壁厚0.045）
+                vertex_count = generate_nose_cone(
+                    mesh, params, position, rotation, segments=24, subdivisions=5, wall_thickness=0.045
+                )
+                print(f"  生成了 {vertex_count} 个顶点")
+            else:
+                print(f"  警告: FairingNoseCone1部件没有Fuselage子元素")
         
         # 其他部件类型可以在这里扩展
         # elif part_type == 'CommandChip1':
