@@ -128,7 +128,7 @@ set /p "USER_INPUT=请输入要转换的文件名: "
 if "!USER_INPUT!"=="" (
     if exist "Input\%DEFAULT_FILE%" (
         set "INPUT_FILE=%DEFAULT_FILE%"
-        set "OUTPUT_NAME=Test-Juno2OBJ.usda"
+        set "OUTPUT_NAME=Test-Juno2OBJ_skel.usda"
     ) else (
         echo.
         echo [错误] 默认文件不存在
@@ -147,7 +147,7 @@ if "!USER_INPUT!"=="" (
         goto MAIN_LOOP
     )
     
-    for %%B in ("!INPUT_FILE!") do set "OUTPUT_NAME=%%~nB.usda"
+    for %%B in ("!INPUT_FILE!") do set "OUTPUT_NAME=%%~nB_skel.usda"
 )
 
 echo.
@@ -157,10 +157,10 @@ echo [信息] 输出文件: Output\!OUTPUT_NAME!
 echo ============================================
 echo.
 
-echo [执行] python pipeline.py "!INPUT_FILE!" "!OUTPUT_NAME!"
+echo [执行] python pipeline.py "!INPUT_FILE!" "!OUTPUT_NAME!" --skeleton
 echo.
 
-python pipeline.py "!INPUT_FILE!" "!OUTPUT_NAME!"
+python pipeline.py "!INPUT_FILE!" "!OUTPUT_NAME!" --skeleton
 
 if errorlevel 1 (
     echo.
