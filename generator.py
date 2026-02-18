@@ -140,6 +140,10 @@ class MeshGenerator:
         
         wall_thickness = part.wall_thickness if is_inlet else 0.0
         
+        # 检测顶面和底面是否收缩到点（scale_x 和 scale_z 都接近0）
+        bottom_is_point = params.bottom_scale_x < 1e-6 and params.bottom_scale_z < 1e-6
+        top_is_point = params.top_scale_x < 1e-6 and params.top_scale_z < 1e-6
+        
         # 生成原始坐标
         raw_bottom_coords = []
         raw_top_coords = []
@@ -150,38 +154,54 @@ class MeshGenerator:
             angle = i * angle_step
             
             # 底部
-            bx, bz = get_rounded_rect_point(angle, params.radius_x, params.radius_z, 
-                                            bottom_corners, bottom_deformation)
-            bx *= params.bottom_scale_x
-            bz *= params.bottom_scale_z
-            bx -= params.offset_x
-            bz -= params.offset_z
+            if bottom_is_point:
+                # 如果底面是点，所有顶点都在中心
+                bx = -params.offset_x
+                bz = -params.offset_z
+            else:
+                bx, bz = get_rounded_rect_point(angle, params.radius_x, params.radius_z, 
+                                                bottom_corners, bottom_deformation)
+                bx *= params.bottom_scale_x
+                bz *= params.bottom_scale_z
+                bx -= params.offset_x
+                bz -= params.offset_z
             raw_bottom_coords.append((bx, -half_len, bz))
             
             if is_inlet:
-                dist = math.sqrt(bx**2 + bz**2)
-                if dist > wall_thickness:
-                    ratio = (dist - wall_thickness) / dist
-                    raw_bottom_inner.append((bx * ratio, -half_len, bz * ratio))
-                else:
+                if bottom_is_point:
                     raw_bottom_inner.append((0, -half_len, 0))
+                else:
+                    dist = math.sqrt(bx**2 + bz**2)
+                    if dist > wall_thickness:
+                        ratio = (dist - wall_thickness) / dist
+                        raw_bottom_inner.append((bx * ratio, -half_len, bz * ratio))
+                    else:
+                        raw_bottom_inner.append((0, -half_len, 0))
             
             # 顶部
-            tx, tz = get_rounded_rect_point(angle, params.radius_x, params.radius_z,
-                                            top_corners, top_deformation)
-            tx *= params.top_scale_x
-            tz *= params.top_scale_z
-            tx += params.offset_x
-            tz += params.offset_z
+            if top_is_point:
+                # 如果顶面是点，所有顶点都在中心
+                tx = params.offset_x
+                tz = params.offset_z
+            else:
+                tx, tz = get_rounded_rect_point(angle, params.radius_x, params.radius_z,
+                                                top_corners, top_deformation)
+                tx *= params.top_scale_x
+                tz *= params.top_scale_z
+                tx += params.offset_x
+                tz += params.offset_z
             raw_top_coords.append((tx, half_len, tz))
             
             if is_inlet:
-                dist = math.sqrt(tx**2 + tz**2)
-                if dist > wall_thickness:
-                    ratio = (dist - wall_thickness) / dist
-                    raw_top_inner.append((tx * ratio, half_len, tz * ratio))
-                else:
+                if top_is_point:
                     raw_top_inner.append((0, half_len, 0))
+                else:
+                    dist = math.sqrt(tx**2 + tz**2)
+                    if dist > wall_thickness:
+                        ratio = (dist - wall_thickness) / dist
+                        raw_top_inner.append((tx * ratio, half_len, tz * ratio))
+                    else:
+                        raw_top_inner.append((0, half_len, 0))
         
         # 应用clamp和partScale
         squeezed_bottom = self._apply_clamp(raw_bottom_coords, bottom_clamp)
@@ -204,60 +224,111 @@ class MeshGenerator:
         bottom_inner_indices = [] if is_inlet else None
         top_inner_indices = [] if is_inlet else None
         
-        for i in range(self.segments):
-            bx, by, bz = squeezed_bottom[i]
-            tx, ty, tz = squeezed_top[i]
-            
+        # 预计算底部中心点（如果底面是点）
+        if bottom_is_point:
+            bx, by, bz = squeezed_bottom[0]  # 所有点都一样，取第一个
+            local_b = np.array([bx, by, bz])
+            world_b = R @ local_b + pos
+            v_center_bottom = len(raw_mesh.vertices)
+            raw_mesh.vertices.append(tuple(world_b))
+            vt_center_bottom = len(raw_mesh.uvs)
+            raw_mesh.uvs.append((0.5, 0.5))
+        
+        # 预计算顶部中心点（如果顶面是点）
+        if top_is_point:
+            tx, ty, tz = squeezed_top[0]  # 所有点都一样，取第一个
             # 应用竖切到顶部Y
             z_normalized = tz / (params.radius_z * params.top_scale_z) if params.radius_z * params.top_scale_z > 0.001 else 0
             cut_depth = 2 * params.offset_y * vertical_shear
             ty += cut_depth * (z_normalized - 1) / 2
             
-            # 变换到世界坐标
-            local_b = np.array([bx, by, bz])
-            world_b = R @ local_b + pos
-            
             local_t = np.array([tx, ty, tz])
             world_t = R @ local_t + pos
-            
+            v_center_top = len(raw_mesh.vertices)
+            raw_mesh.vertices.append(tuple(world_t))
+            vt_center_top = len(raw_mesh.uvs)
+            raw_mesh.uvs.append((0.5, 0.5))
+        
+        # 预计算底部内层中心点（如果是inlet且底面是点）
+        if is_inlet and bottom_is_point:
+            v_center_bottom_inner = v_center_bottom  # 同一点
+            vt_center_bottom_inner = vt_center_bottom
+        
+        # 预计算顶部内层中心点（如果是inlet且顶面是点）
+        if is_inlet and top_is_point:
+            v_center_top_inner = v_center_top  # 同一点
+            vt_center_top_inner = vt_center_top
+        
+        for i in range(self.segments):
             u = i / self.segments
             
-            # 添加顶点
-            v_idx_b = len(raw_mesh.vertices)
-            raw_mesh.vertices.append(tuple(world_b))
-            vt_idx_b = len(raw_mesh.uvs)
-            raw_mesh.uvs.append((u, 0.0))
-            bottom_indices.append((v_idx_b, vt_idx_b))
+            # 底部顶点
+            if bottom_is_point:
+                # 底面是点，所有索引指向同一个中心顶点
+                bottom_indices.append((v_center_bottom, vt_center_bottom))
+            else:
+                bx, by, bz = squeezed_bottom[i]
+                local_b = np.array([bx, by, bz])
+                world_b = R @ local_b + pos
+                
+                v_idx_b = len(raw_mesh.vertices)
+                raw_mesh.vertices.append(tuple(world_b))
+                vt_idx_b = len(raw_mesh.uvs)
+                raw_mesh.uvs.append((u, 0.0))
+                bottom_indices.append((v_idx_b, vt_idx_b))
             
-            v_idx_t = len(raw_mesh.vertices)
-            raw_mesh.vertices.append(tuple(world_t))
-            vt_idx_t = len(raw_mesh.uvs)
-            raw_mesh.uvs.append((u, 1.0))
-            top_indices.append((v_idx_t, vt_idx_t))
+            # 顶部顶点
+            if top_is_point:
+                # 顶面是点，所有索引指向同一个中心顶点
+                top_indices.append((v_center_top, vt_center_top))
+            else:
+                tx, ty, tz = squeezed_top[i]
+                # 应用竖切到顶部Y
+                z_normalized = tz / (params.radius_z * params.top_scale_z) if params.radius_z * params.top_scale_z > 0.001 else 0
+                cut_depth = 2 * params.offset_y * vertical_shear
+                ty += cut_depth * (z_normalized - 1) / 2
+                
+                local_t = np.array([tx, ty, tz])
+                world_t = R @ local_t + pos
+                
+                v_idx_t = len(raw_mesh.vertices)
+                raw_mesh.vertices.append(tuple(world_t))
+                vt_idx_t = len(raw_mesh.uvs)
+                raw_mesh.uvs.append((u, 1.0))
+                top_indices.append((v_idx_t, vt_idx_t))
             
             if is_inlet:
-                bxi, byi, bzi = squeezed_bottom_inner[i]
-                txi, tyi, tzi = squeezed_top_inner[i]
+                # 底部内层顶点
+                if bottom_is_point:
+                    bottom_inner_indices.append((v_center_bottom_inner, vt_center_bottom_inner))
+                else:
+                    bxi, byi, bzi = squeezed_bottom_inner[i]
+                    local_bi = np.array([bxi, byi, bzi])
+                    world_bi = R @ local_bi + pos
+                    
+                    v_idx_bi = len(raw_mesh.vertices)
+                    raw_mesh.vertices.append(tuple(world_bi))
+                    vt_idx_bi = len(raw_mesh.uvs)
+                    raw_mesh.uvs.append((u, 0.0))
+                    bottom_inner_indices.append((v_idx_bi, vt_idx_bi))
                 
-                z_norm_i = tzi / (params.radius_z * params.top_scale_z) if params.radius_z * params.top_scale_z > 0.001 else 0
-                tyi += cut_depth * (z_norm_i - 1) / 2
-                
-                local_bi = np.array([bxi, byi, bzi])
-                world_bi = R @ local_bi + pos
-                local_ti = np.array([txi, tyi, tzi])
-                world_ti = R @ local_ti + pos
-                
-                v_idx_bi = len(raw_mesh.vertices)
-                raw_mesh.vertices.append(tuple(world_bi))
-                vt_idx_bi = len(raw_mesh.uvs)
-                raw_mesh.uvs.append((u, 0.0))
-                bottom_inner_indices.append((v_idx_bi, vt_idx_bi))
-                
-                v_idx_ti = len(raw_mesh.vertices)
-                raw_mesh.vertices.append(tuple(world_ti))
-                vt_idx_ti = len(raw_mesh.uvs)
-                raw_mesh.uvs.append((u, 1.0))
-                top_inner_indices.append((v_idx_ti, vt_idx_ti))
+                # 顶部内层顶点
+                if top_is_point:
+                    top_inner_indices.append((v_center_top_inner, vt_center_top_inner))
+                else:
+                    txi, tyi, tzi = squeezed_top_inner[i]
+                    z_norm_i = tzi / (params.radius_z * params.top_scale_z) if params.radius_z * params.top_scale_z > 0.001 else 0
+                    cut_depth = 2 * params.offset_y * vertical_shear
+                    tyi += cut_depth * (z_norm_i - 1) / 2
+                    
+                    local_ti = np.array([txi, tyi, tzi])
+                    world_ti = R @ local_ti + pos
+                    
+                    v_idx_ti = len(raw_mesh.vertices)
+                    raw_mesh.vertices.append(tuple(world_ti))
+                    vt_idx_ti = len(raw_mesh.uvs)
+                    raw_mesh.uvs.append((u, 1.0))
+                    top_inner_indices.append((v_idx_ti, vt_idx_ti))
         
         # 记录ring信息供法线计算使用
         raw_mesh.ring_info = {
@@ -269,88 +340,141 @@ class MeshGenerator:
             'top_corners': top_corners,
             'is_inlet': is_inlet,
             'segments': self.segments,
+            'bottom_is_point': bottom_is_point,
+            'top_is_point': top_is_point,
         }
         
         # 生成面 (暂时不计算法线，索引为-1)
-        for i in range(self.segments):
-            next_i = (i + 1) % self.segments
-            
-            b_i = bottom_indices[i]
-            b_next = bottom_indices[next_i]
-            t_next = top_indices[next_i]
-            t_i = top_indices[i]
-            
-            # 两个三角面，法线索引暂为0
-            raw_mesh.faces.append((b_i[0], t_i[0], t_next[0], b_i[1], t_i[1], t_next[1], raw_mesh.material_name, part.part_id))
-            raw_mesh.faces.append((b_i[0], t_next[0], b_next[0], b_i[1], t_next[1], b_next[1], raw_mesh.material_name, part.part_id))
-        
-        if is_inlet:
+        if bottom_is_point and top_is_point:
+            # 两面都是点，不生成侧面（这是一个退化的圆柱）
+            pass
+        elif bottom_is_point:
+            # 底面是点，顶面是圆：生成三角形扇（从顶点到底边）
             for i in range(self.segments):
                 next_i = (i + 1) % self.segments
-                bi_i = bottom_inner_indices[i]
-                bi_next = bottom_inner_indices[next_i]
-                ti_next = top_inner_indices[next_i]
-                ti_i = top_inner_indices[i]
-                
-                raw_mesh.faces.append((bi_i[0], ti_next[0], ti_i[0], bi_i[1], ti_next[1], ti_i[1], raw_mesh.material_name, part.part_id))
-                raw_mesh.faces.append((bi_i[0], bi_next[0], ti_next[0], bi_i[1], bi_next[1], ti_next[1], raw_mesh.material_name, part.part_id))
-            
-            # 端盖
-            for i in range(self.segments):
-                next_i = (i + 1) % self.segments
-                bo_i = bottom_indices[i]
-                bo_next = bottom_indices[next_i]
-                bi_next = bottom_inner_indices[next_i]
-                bi_i = bottom_inner_indices[i]
-                
-                raw_mesh.faces.append((bo_i[0], bo_next[0], bi_next[0], bo_i[1], bo_next[1], bi_next[1], raw_mesh.material_name, part.part_id))
-                raw_mesh.faces.append((bo_i[0], bi_next[0], bi_i[0], bo_i[1], bi_next[1], bi_i[1], raw_mesh.material_name, part.part_id))
-            
-            for i in range(self.segments):
-                next_i = (i + 1) % self.segments
-                to_i = top_indices[i]
-                to_next = top_indices[next_i]
-                ti_next = top_inner_indices[next_i]
-                ti_i = top_inner_indices[i]
-                
-                raw_mesh.faces.append((to_i[0], ti_i[0], ti_next[0], to_i[1], ti_i[1], ti_next[1], raw_mesh.material_name, part.part_id))
-                raw_mesh.faces.append((to_i[0], ti_next[0], to_next[0], to_i[1], ti_next[1], to_next[1], raw_mesh.material_name, part.part_id))
-        else:
-            # 实心端盖
-            center_bottom_local = np.array([
-                -params.offset_x * scale_x, 
-                -half_len * scale_y, 
-                -params.offset_z * scale_z
-            ])
-            world_center_bottom = R @ center_bottom_local + pos
-            v_center_bottom = len(raw_mesh.vertices)
-            raw_mesh.vertices.append(tuple(world_center_bottom))
-            vt_center_bottom = len(raw_mesh.uvs)
-            raw_mesh.uvs.append((0.5, 0.5))
-            
+                b_i = bottom_indices[i]  # 这是中心点
+                t_i = top_indices[i]
+                t_next = top_indices[next_i]
+                # 一个三角形：中心点 -> 顶边当前点 -> 顶边下一个点
+                raw_mesh.faces.append((b_i[0], t_i[0], t_next[0], b_i[1], t_i[1], t_next[1], raw_mesh.material_name, part.part_id))
+        elif top_is_point:
+            # 顶面是点，底面是圆：生成三角形扇（从底边到顶点）
             for i in range(self.segments):
                 next_i = (i + 1) % self.segments
                 b_i = bottom_indices[i]
                 b_next = bottom_indices[next_i]
-                raw_mesh.faces.append((v_center_bottom, b_i[0], b_next[0], vt_center_bottom, b_i[1], b_next[1], raw_mesh.material_name, part.part_id))
-            
-            cut_depth = 2 * params.offset_y * vertical_shear * scale_y
-            center_top_local = np.array([
-                params.offset_x * scale_x, 
-                half_len * scale_y - cut_depth/2, 
-                params.offset_z * scale_z
-            ])
-            world_center_top = R @ center_top_local + pos
-            v_center_top = len(raw_mesh.vertices)
-            raw_mesh.vertices.append(tuple(world_center_top))
-            vt_center_top = len(raw_mesh.uvs)
-            raw_mesh.uvs.append((0.5, 0.5))
-            
+                t_i = top_indices[i]  # 这是中心点
+                # 一个三角形：底边当前点 -> 顶点 -> 底边下一个点
+                raw_mesh.faces.append((b_i[0], t_i[0], b_next[0], b_i[1], t_i[1], b_next[1], raw_mesh.material_name, part.part_id))
+        else:
+            # 正常的四边形侧面
             for i in range(self.segments):
                 next_i = (i + 1) % self.segments
-                t_i = top_indices[i]
+                
+                b_i = bottom_indices[i]
+                b_next = bottom_indices[next_i]
                 t_next = top_indices[next_i]
-                raw_mesh.faces.append((v_center_top, t_next[0], t_i[0], vt_center_top, t_next[1], t_i[1], raw_mesh.material_name, part.part_id))
+                t_i = top_indices[i]
+                
+                # 两个三角面，法线索引暂为0
+                raw_mesh.faces.append((b_i[0], t_i[0], t_next[0], b_i[1], t_i[1], t_next[1], raw_mesh.material_name, part.part_id))
+                raw_mesh.faces.append((b_i[0], t_next[0], b_next[0], b_i[1], t_next[1], b_next[1], raw_mesh.material_name, part.part_id))
+        
+        if is_inlet:
+            # 内层侧面生成（注意法线方向与外层面相反）
+            if bottom_is_point and top_is_point:
+                # 两面都是点，不生成侧面
+                pass
+            elif bottom_is_point:
+                # 底面是点：三角形扇
+                for i in range(self.segments):
+                    next_i = (i + 1) % self.segments
+                    bi_i = bottom_inner_indices[i]  # 中心点
+                    ti_i = top_inner_indices[i]
+                    ti_next = top_inner_indices[next_i]
+                    # 注意内层面法线方向相反
+                    raw_mesh.faces.append((bi_i[0], ti_next[0], ti_i[0], bi_i[1], ti_next[1], ti_i[1], raw_mesh.material_name, part.part_id))
+            elif top_is_point:
+                # 顶面是点：三角形扇
+                for i in range(self.segments):
+                    next_i = (i + 1) % self.segments
+                    bi_i = bottom_inner_indices[i]
+                    bi_next = bottom_inner_indices[next_i]
+                    ti_i = top_inner_indices[i]  # 中心点
+                    raw_mesh.faces.append((bi_i[0], bi_next[0], ti_i[0], bi_i[1], bi_next[1], ti_i[1], raw_mesh.material_name, part.part_id))
+            else:
+                # 正常的四边形侧面
+                for i in range(self.segments):
+                    next_i = (i + 1) % self.segments
+                    bi_i = bottom_inner_indices[i]
+                    bi_next = bottom_inner_indices[next_i]
+                    ti_next = top_inner_indices[next_i]
+                    ti_i = top_inner_indices[i]
+                    
+                    raw_mesh.faces.append((bi_i[0], ti_next[0], ti_i[0], bi_i[1], ti_next[1], ti_i[1], raw_mesh.material_name, part.part_id))
+                    raw_mesh.faces.append((bi_i[0], bi_next[0], ti_next[0], bi_i[1], bi_next[1], ti_next[1], raw_mesh.material_name, part.part_id))
+            
+            # 底端端盖 - 仅在底面不是点且不是空心到点的情况下生成
+            if not bottom_is_point:
+                for i in range(self.segments):
+                    next_i = (i + 1) % self.segments
+                    bo_i = bottom_indices[i]
+                    bo_next = bottom_indices[next_i]
+                    bi_next = bottom_inner_indices[next_i]
+                    bi_i = bottom_inner_indices[i]
+                    
+                    raw_mesh.faces.append((bo_i[0], bo_next[0], bi_next[0], bo_i[1], bo_next[1], bi_next[1], raw_mesh.material_name, part.part_id))
+                    raw_mesh.faces.append((bo_i[0], bi_next[0], bi_i[0], bo_i[1], bi_next[1], bi_i[1], raw_mesh.material_name, part.part_id))
+            
+            # 顶端端盖 - 仅在顶面不是点且不是空心到点的情况下生成
+            if not top_is_point:
+                for i in range(self.segments):
+                    next_i = (i + 1) % self.segments
+                    to_i = top_indices[i]
+                    to_next = top_indices[next_i]
+                    ti_next = top_inner_indices[next_i]
+                    ti_i = top_inner_indices[i]
+                    
+                    raw_mesh.faces.append((to_i[0], ti_i[0], ti_next[0], to_i[1], ti_i[1], ti_next[1], raw_mesh.material_name, part.part_id))
+                    raw_mesh.faces.append((to_i[0], ti_next[0], to_next[0], to_i[1], ti_next[1], to_next[1], raw_mesh.material_name, part.part_id))
+        else:
+            # 实心端盖
+            if not bottom_is_point:
+                center_bottom_local = np.array([
+                    -params.offset_x * scale_x, 
+                    -half_len * scale_y, 
+                    -params.offset_z * scale_z
+                ])
+                world_center_bottom = R @ center_bottom_local + pos
+                v_center_bottom = len(raw_mesh.vertices)
+                raw_mesh.vertices.append(tuple(world_center_bottom))
+                vt_center_bottom = len(raw_mesh.uvs)
+                raw_mesh.uvs.append((0.5, 0.5))
+                
+                for i in range(self.segments):
+                    next_i = (i + 1) % self.segments
+                    b_i = bottom_indices[i]
+                    b_next = bottom_indices[next_i]
+                    raw_mesh.faces.append((v_center_bottom, b_i[0], b_next[0], vt_center_bottom, b_i[1], b_next[1], raw_mesh.material_name, part.part_id))
+            
+            if not top_is_point:
+                cut_depth = 2 * params.offset_y * vertical_shear * scale_y
+                center_top_local = np.array([
+                    params.offset_x * scale_x, 
+                    half_len * scale_y - cut_depth/2, 
+                    params.offset_z * scale_z
+                ])
+                world_center_top = R @ center_top_local + pos
+                v_center_top = len(raw_mesh.vertices)
+                raw_mesh.vertices.append(tuple(world_center_top))
+                vt_center_top = len(raw_mesh.uvs)
+                raw_mesh.uvs.append((0.5, 0.5))
+                
+                for i in range(self.segments):
+                    next_i = (i + 1) % self.segments
+                    t_i = top_indices[i]
+                    t_next = top_indices[next_i]
+                    raw_mesh.faces.append((v_center_top, t_next[0], t_i[0], vt_center_top, t_next[1], t_i[1], raw_mesh.material_name, part.part_id))
     
     def _generate_nose_cone(self, part: PartData, raw_mesh: RawMeshData, is_hollow: bool):
         """生成NoseCone（鼻锥）"""
