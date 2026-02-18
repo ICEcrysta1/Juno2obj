@@ -85,21 +85,6 @@ echo  [Pipeline Mode - 模块化流水线]
 echo ============================================
 echo.
 
-:: 显示配置参数
-echo --------------------------------------------
-echo [当前配置参数]
-echo --------------------------------------------
-echo   默认半径 X: %RADIUS_X%
-echo   默认半径 Z: %RADIUS_Z%
-echo   圆柱分段数: %SEGMENTS%
-echo   自定义法线: %USE_NORMALS%
-echo.
-
-if "%RADIUS_X%"=="" set "RADIUS_X=1.0"
-if "%RADIUS_Z%"=="" set "RADIUS_Z=1.0"
-if "%SEGMENTS%"=="" set "SEGMENTS=24"
-if "%USE_NORMALS%"=="" set "USE_NORMALS=Y"
-
 echo --------------------------------------------
 echo [Input 文件夹中的 XML 文件]
 echo --------------------------------------------
@@ -111,7 +96,7 @@ for %%F in ("Input\*.xml") do (
 )
 
 if %FILE_COUNT%==0 goto NO_FILES
-goto HAS_FILES
+goto START_CONVERT
 
 :NO_FILES
 echo   (暂无 XML 文件)
@@ -129,69 +114,15 @@ if /i "!OPEN_FOLDER!"=="Y" (
 )
 exit /b 0
 
-:HAS_FILES
+:START_CONVERT
 echo --------------------------------------------
 echo.
 
 if exist "Input\%DEFAULT_FILE%" (
-    echo [默认] %DEFAULT_FILE% (直接回车使用默认)
+    echo [默认] 直接回车使用: %DEFAULT_FILE%
 )
 echo.
 
-:: 显示选项菜单
-echo [选项]
-echo   1. 开始转换
-echo   2. 设置参数 (半径、分段数等)
-echo   3. 使用旧版转换器 (run.bat)
-echo   4. 退出
-echo.
-
-set /p "MENU_CHOICE=请选择操作 (1-4，直接回车=开始转换): "
-if "!MENU_CHOICE!"=="" set "MENU_CHOICE=1"
-
-if "!MENU_CHOICE!"=="2" goto SETTINGS
-if "!MENU_CHOICE!"=="3" (
-    echo.
-    echo 正在启动旧版转换器...
-    call run.bat
-    goto MAIN_LOOP
-)
-if "!MENU_CHOICE!"=="4" exit /b 0
-if "!MENU_CHOICE!"=="1" goto START_CONVERT
-
-goto MAIN_LOOP
-
-:SETTINGS
-cls
-echo ============================================
-echo  参数设置
-echo ============================================
-echo.
-echo [当前值]
-echo   半径 X (短边): %RADIUS_X%
-echo   半径 Z (长边): %RADIUS_Z%
-echo   圆柱分段数: %SEGMENTS%
-echo   使用自定义法线: %USE_NORMALS%
-echo.
-
-set /p "NEW_RX=请输入半径 X (直接回车保持 %RADIUS_X%): "
-if not "!NEW_RX!"=="" set "RADIUS_X=!NEW_RX!"
-
-set /p "NEW_RZ=请输入半径 Z (直接回车保持 %RADIUS_Z%): "
-if not "!NEW_RZ!"=="" set "RADIUS_Z=!NEW_RZ!"
-
-set /p "NEW_SEG=请输入圆柱分段数 (直接回车保持 %SEGMENTS%): "
-if not "!NEW_SEG!"=="" set "SEGMENTS=!NEW_SEG!"
-
-set /p "NEW_NORM=是否使用自定义法线 (Y/N，直接回车保持 %USE_NORMALS%): "
-if not "!NEW_NORM!"=="" set "USE_NORMALS=!NEW_NORM!"
-
-echo.
-echo [新设置已保存]
-pause
-goto MAIN_LOOP
-
-:START_CONVERT
 set /p "USER_INPUT=请输入要转换的文件名: "
 
 if "!USER_INPUT!"=="" (
@@ -223,34 +154,13 @@ echo.
 echo ============================================
 echo [信息] 输入文件: Input\!INPUT_FILE!
 echo [信息] 输出文件: Output\!OUTPUT_NAME!
-echo [信息] 半径 X: %RADIUS_X%, 半径 Z: %RADIUS_Z%
-echo [信息] 分段数: %SEGMENTS%
 echo ============================================
 echo.
 
-:: 构建命令行参数
-set "PIPELINE_ARGS="
-
-if not "%RADIUS_X%"=="1.0" (
-    set "PIPELINE_ARGS=!PIPELINE_ARGS! --radius-x %RADIUS_X%"
-)
-
-if not "%RADIUS_Z%"=="1.0" (
-    set "PIPELINE_ARGS=!PIPELINE_ARGS! --radius-z %RADIUS_Z%"
-)
-
-if not "%SEGMENTS%"=="24" (
-    set "PIPELINE_ARGS=!PIPELINE_ARGS! --segments %SEGMENTS%"
-)
-
-if /i "%USE_NORMALS%"=="N" (
-    set "PIPELINE_ARGS=!PIPELINE_ARGS! --no-normals"
-)
-
-echo [执行] python pipeline.py "!INPUT_FILE!" "!OUTPUT_NAME!"!PIPELINE_ARGS!
+echo [执行] python pipeline.py "!INPUT_FILE!" "!OUTPUT_NAME!"
 echo.
 
-python pipeline.py "!INPUT_FILE!" "!OUTPUT_NAME!"!PIPELINE_ARGS!
+python pipeline.py "!INPUT_FILE!" "!OUTPUT_NAME!"
 
 if errorlevel 1 (
     echo.
