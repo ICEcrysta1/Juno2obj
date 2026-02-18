@@ -814,7 +814,7 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
                         subdivisions: int = 5,
                         wall_thickness: float = 0.0) -> int:
     """
-    生成NoseCone（冯·卡门曲线锥形）
+    生成NoseCone（冯·卡门曲线锥形）- 使用统一法线计算
     
     特点:
     - 类似参考文件的平滑锥形
@@ -869,12 +869,12 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
     # 共 subdivisions+1 个截面
     num_rings = subdivisions + 1
     
-    # 存储每一层的顶点索引（外层）
-    ring_indices = []  # 每个元素是 [(v_idx, vt_idx, vn_idx), ...]
+    # 存储每一层的顶点索引（外层）- 只存储 (v_idx, vt_idx)
+    ring_indices = []  # 每个元素是 [(v_idx, vt_idx), ...]
     # 存储每一层的内层顶点索引（空心模式）
     inner_ring_indices = [] if is_hollow else None
     
-    # 生成每一层的截面
+    # ========== 第一阶段：生成所有顶点和UV（不计算法线）==========
     for ring in range(num_rings):
         # 归一化高度 (0 = 底部, 1 = 顶部)
         t = ring / subdivisions
@@ -882,13 +882,8 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
         # 当前层的高度（Y坐标）
         y = -half_len + t * params.length
         
-        # 计算当前层的半径比例 - 精确匹配参考文件形状
-        # 参考文件的半径变化（t从0到1）：1.0 -> 0.958 -> 0.863 -> 0.649 -> 0.351 -> 0.0
-        # 这是一个典型的冯·卡门曲线 (von Karman ogive)
+        # 计算当前层的半径比例
         if t < 0.99:  # 非尖点部分
-            # 使用自定义曲线来匹配参考文件的半径变化
-            # 调整系数以匹配: t=0.2->0.958, t=0.4->0.863, t=0.6->0.649, t=0.8->0.351
-            # 使用 1 - t^2.1 曲线，平衡各层误差
             ease_t = math.pow(t, 2.1)
             radius_ratio_x = params.bottom_scale_x * (1.0 - ease_t) + params.top_scale_x * ease_t
             radius_ratio_z = params.bottom_scale_z * (1.0 - ease_t) + params.top_scale_z * ease_t
@@ -969,23 +964,18 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
             local_pos = np.array([x, y_final, z])
             world_pos = R @ local_pos + pos
             
-            # 尖点的法线朝上
-            normal = np.array([0, 1, 0])
-            world_normal = R @ normal
-            
             # UV坐标（中心点）
             u, v = 0.5, t
             
-            # 添加顶点到网格
+            # 添加顶点到网格（不计算法线）
             v_idx = mesh.add_vertex(world_pos[0], world_pos[1], world_pos[2])
-            vn_idx = mesh.add_normal(world_normal[0], world_normal[1], world_normal[2])
             vt_idx = mesh.add_uv(u, v)
             
             # 为所有角度重复相同的顶点索引
             for i in range(segments):
-                ring_verts.append((v_idx, vt_idx, vn_idx))
+                ring_verts.append((v_idx, vt_idx))
                 if is_hollow:
-                    inner_ring_verts.append((v_idx, vt_idx, vn_idx))
+                    inner_ring_verts.append((v_idx, vt_idx))
         else:
             # 正常截面：为每个角度生成顶点
             # 如果是空心模式，计算内层坐标
@@ -1013,49 +1003,14 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
                 local_pos = np.array([x, y_final, z])
                 world_pos = R @ local_pos + pos
                 
-                # 计算法线
-                cos_a = math.cos(i * angle_step)
-                sin_a = math.sin(i * angle_step)
-                
-                # 根据当前层的形状计算法线
-                if current_rx > 1e-6 and current_rz > 1e-6:
-                    nx = cos_a / current_rx
-                    nz = sin_a / current_rz
-                    norm = math.sqrt(nx**2 + nz**2)
-                    if norm > 0:
-                        nx /= norm
-                        nz /= norm
-                else:
-                    nx, nz = cos_a, sin_a
-                
-                # 圆锥侧面的法线 - 根据曲线斜率计算Y分量
-                # 计算曲线在该点的导数
-                if t < 0.99:
-                    dt = 0.01
-                    t_next = min(t + dt, 0.99)
-                    ease_t_next = math.pow(t_next, 2.1)
-                    radius_next_x = params.bottom_scale_x * (1.0 - ease_t_next) + params.top_scale_x * ease_t_next
-                    dr = radius_next_x - radius_ratio_x
-                    # 斜率 = dr/dt，法线Y分量与斜率成正比
-                    slope = dr / dt
-                    ny = -slope * math.sqrt(nx**2 + nz**2)
-                else:
-                    ny = 0.0
-                
-                normal = np.array([nx, ny, nz])
-                normal = normal / np.linalg.norm(normal) if np.linalg.norm(normal) > 0 else np.array([nx, 0, nz])
-                
-                world_normal = R @ normal
-                
                 # UV坐标
                 u = i / segments
                 v = t
                 
-                # 添加外层顶点到网格
+                # 添加外层顶点到网格（不计算法线）
                 v_idx = mesh.add_vertex(world_pos[0], world_pos[1], world_pos[2])
-                vn_idx = mesh.add_normal(world_normal[0], world_normal[1], world_normal[2])
                 vt_idx = mesh.add_uv(u, v)
-                ring_verts.append((v_idx, vt_idx, vn_idx))
+                ring_verts.append((v_idx, vt_idx))
                 
                 # 如果是空心模式，添加内层顶点
                 if is_hollow:
@@ -1070,76 +1025,232 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
                     local_pos_i = np.array([xi, y_final_i, zi])
                     world_pos_i = R @ local_pos_i + pos
                     
-                    # 内层法线（朝内，与外圈相反）
-                    normal_i = np.array([-nx, -ny, -nz])
-                    world_normal_i = R @ normal_i
-                    
                     # 添加内层顶点
                     v_idx_i = mesh.add_vertex(world_pos_i[0], world_pos_i[1], world_pos_i[2])
-                    vn_idx_i = mesh.add_normal(world_normal_i[0], world_normal_i[1], world_normal_i[2])
                     vt_idx_i = mesh.add_uv(u, v)
-                    inner_ring_verts.append((v_idx_i, vt_idx_i, vn_idx_i))
+                    inner_ring_verts.append((v_idx_i, vt_idx_i))
         
         ring_indices.append(ring_verts)
         if is_hollow:
             inner_ring_indices.append(inner_ring_verts)
     
+    # ========== 第二阶段：基于相邻层顶点计算侧面法线 ==========
+    # 外层法线
+    ring_normals = []  # 每个元素是 [vn_idx, ...]
+    
+    for ring in range(num_rings):
+        ring_normals_current = []
+        
+        for i in range(segments):
+            # 获取当前层顶点
+            v_curr_idx = ring_indices[ring][i][0]
+            v_curr = mesh.vertices[v_curr_idx - 1]
+            
+            # 找上一层和下一层的对应顶点
+            if ring == 0:
+                # 底层：只使用下一层计算法线
+                v_next_idx = ring_indices[ring + 1][i][0]
+                v_next = mesh.vertices[v_next_idx - 1]
+                tangent = (v_next[0] - v_curr[0], v_next[1] - v_curr[1], v_next[2] - v_curr[2])
+            elif ring == num_rings - 1:
+                # 顶层（尖点）：只使用上一层计算法线
+                v_prev_idx = ring_indices[ring - 1][i][0]
+                v_prev = mesh.vertices[v_prev_idx - 1]
+                tangent = (v_curr[0] - v_prev[0], v_curr[1] - v_prev[1], v_curr[2] - v_prev[2])
+            else:
+                # 中间层：使用上下两层的中点
+                v_prev_idx = ring_indices[ring - 1][i][0]
+                v_next_idx = ring_indices[ring + 1][i][0]
+                v_prev = mesh.vertices[v_prev_idx - 1]
+                v_next = mesh.vertices[v_next_idx - 1]
+                tangent = ((v_next[0] - v_prev[0]) / 2, 
+                          (v_next[1] - v_prev[1]) / 2,
+                          (v_next[2] - v_prev[2]) / 2)
+            
+            # 计算水平径向方向（从中心指向顶点）
+            ring_coords = [mesh.vertices[idx - 1] for idx, _ in ring_indices[ring]]
+            center_x = sum(c[0] for c in ring_coords) / len(ring_coords)
+            center_z = sum(c[2] for c in ring_coords) / len(ring_coords)
+            
+            dx = v_curr[0] - center_x
+            dz = v_curr[2] - center_z
+            h = math.sqrt(dx**2 + dz**2)
+            
+            if h > 1e-6:
+                radial_x = dx / h
+                radial_z = dz / h
+            else:
+                angle = i * 2 * math.pi / segments
+                radial_x = math.cos(angle)
+                radial_z = math.sin(angle)
+            
+            # 计算法线：垂直于切线
+            tangent_len_sq = tangent[0]**2 + tangent[1]**2 + tangent[2]**2
+            if tangent_len_sq > 1e-6 and h > 1e-6:
+                dot = radial_x * tangent[0] + radial_z * tangent[2]
+                if abs(tangent[1]) > 1e-6:
+                    ny = -dot / tangent[1]
+                else:
+                    ny = 0
+            else:
+                ny = 0
+            
+            # 归一化
+            norm = math.sqrt(radial_x**2 + ny**2 + radial_z**2)
+            if norm > 1e-6:
+                radial_x /= norm
+                ny /= norm
+                radial_z /= norm
+            
+            vn_idx = mesh.add_normal(radial_x, ny, radial_z)
+            ring_normals_current.append(vn_idx)
+        
+        ring_normals.append(ring_normals_current)
+    
+    # 内层法线（空心模式）
+    inner_ring_normals = [] if is_hollow else None
+    if is_hollow:
+        for ring in range(num_rings):
+            inner_normals_current = []
+            
+            for i in range(segments):
+                v_curr_idx = inner_ring_indices[ring][i][0]
+                v_curr = mesh.vertices[v_curr_idx - 1]
+                
+                if ring == 0:
+                    v_next_idx = inner_ring_indices[ring + 1][i][0]
+                    v_next = mesh.vertices[v_next_idx - 1]
+                    tangent = (v_next[0] - v_curr[0], v_next[1] - v_curr[1], v_next[2] - v_curr[2])
+                elif ring == num_rings - 1:
+                    v_prev_idx = inner_ring_indices[ring - 1][i][0]
+                    v_prev = mesh.vertices[v_prev_idx - 1]
+                    tangent = (v_curr[0] - v_prev[0], v_curr[1] - v_prev[1], v_curr[2] - v_prev[2])
+                else:
+                    v_prev_idx = inner_ring_indices[ring - 1][i][0]
+                    v_next_idx = inner_ring_indices[ring + 1][i][0]
+                    v_prev = mesh.vertices[v_prev_idx - 1]
+                    v_next = mesh.vertices[v_next_idx - 1]
+                    tangent = ((v_next[0] - v_prev[0]) / 2, 
+                              (v_next[1] - v_prev[1]) / 2,
+                              (v_next[2] - v_prev[2]) / 2)
+                
+                # 内层中心
+                ring_coords = [mesh.vertices[idx - 1] for idx, _ in inner_ring_indices[ring]]
+                center_x = sum(c[0] for c in ring_coords) / len(ring_coords)
+                center_z = sum(c[2] for c in ring_coords) / len(ring_coords)
+                
+                dx = v_curr[0] - center_x
+                dz = v_curr[2] - center_z
+                h = math.sqrt(dx**2 + dz**2)
+                
+                if h > 1e-6:
+                    radial_x = dx / h
+                    radial_z = dz / h
+                else:
+                    angle = i * 2 * math.pi / segments
+                    radial_x = math.cos(angle)
+                    radial_z = math.sin(angle)
+                
+                tangent_len_sq = tangent[0]**2 + tangent[1]**2 + tangent[2]**2
+                if tangent_len_sq > 1e-6 and h > 1e-6:
+                    dot = radial_x * tangent[0] + radial_z * tangent[2]
+                    if abs(tangent[1]) > 1e-6:
+                        ny = -dot / tangent[1]
+                    else:
+                        ny = 0
+                else:
+                    ny = 0
+                
+                norm = math.sqrt(radial_x**2 + ny**2 + radial_z**2)
+                if norm > 1e-6:
+                    radial_x /= norm
+                    ny /= norm
+                    radial_z /= norm
+                
+                # 内层法线朝内（取反）
+                vn_idx = mesh.add_normal(-radial_x, -ny, -radial_z)
+                inner_normals_current.append(vn_idx)
+            
+            inner_ring_normals.append(inner_normals_current)
+    
+    # ========== 第三阶段：生成面 ==========
     # 生成侧面（四边形网格）
     for ring in range(subdivisions):
         current_ring = ring_indices[ring]
         next_ring = ring_indices[ring + 1]
+        current_normals = ring_normals[ring]
+        next_normals = ring_normals[ring + 1]
         
         for i in range(segments):
             next_i = (i + 1) % segments
             
-            # 当前四边形的四个顶点
             curr_i = current_ring[i]
             curr_next = current_ring[next_i]
             next_next = next_ring[next_i]
             next_i_vert = next_ring[i]
             
-            # 分解为两个三角面（逆时针顺序）
+            # 使用计算的法线
+            vn_curr_i = current_normals[i]
+            vn_curr_next = current_normals[next_i]
+            vn_next_i = next_normals[i]
+            vn_next_next = next_normals[next_i]
+            
+            # 分解为两个三角面
             mesh.add_face(curr_i[0], next_i_vert[0], next_next[0],
                          curr_i[1], next_i_vert[1], next_next[1],
-                         curr_i[2], next_i_vert[2], next_next[2])
+                         vn_curr_i, vn_next_i, vn_next_next)
             mesh.add_face(curr_i[0], next_next[0], curr_next[0],
                          curr_i[1], next_next[1], curr_next[1],
-                         curr_i[2], next_next[2], curr_next[2])
+                         vn_curr_i, vn_next_next, vn_curr_next)
     
     # 空心模式：生成内侧面
     if is_hollow:
         for ring in range(subdivisions):
             current_ring = inner_ring_indices[ring]
             next_ring = inner_ring_indices[ring + 1]
+            current_normals = inner_ring_normals[ring]
+            next_normals = inner_ring_normals[ring + 1]
             
             for i in range(segments):
                 next_i = (i + 1) % segments
                 
-                # 当前四边形的四个顶点（内侧面法线朝内，面的顺序与外侧面相反）
                 curr_i = current_ring[i]
                 curr_next = current_ring[next_i]
                 next_next = next_ring[next_i]
                 next_i_vert = next_ring[i]
                 
-                # 分解为两个三角面（注意顶点顺序与外侧面相反）
+                vn_curr_i = current_normals[i]
+                vn_curr_next = current_normals[next_i]
+                vn_next_i = next_normals[i]
+                vn_next_next = next_normals[next_i]
+                
+                # 内侧面（法线朝内，顶点顺序相反）
                 mesh.add_face(curr_i[0], curr_next[0], next_next[0],
                              curr_i[1], curr_next[1], next_next[1],
-                             curr_i[2], curr_next[2], next_next[2])
+                             vn_curr_i, vn_curr_next, vn_next_next)
                 mesh.add_face(curr_i[0], next_next[0], next_i_vert[0],
                              curr_i[1], next_next[1], next_i_vert[1],
-                             curr_i[2], next_next[2], next_i_vert[2])
+                             vn_curr_i, vn_next_next, vn_next_i)
     
-    # 生成底部端盖（如果是闭合的）
+    # ========== 第四阶段：生成端盖 ==========
     if params.bottom_scale_x > 1e-6 or params.bottom_scale_z > 1e-6:
+        # 计算底部端盖法线
+        bottom_ring_coords = [mesh.vertices[idx - 1] for idx, _ in ring_indices[0]]
+        bottom_cap_normals = compute_cap_normals_for_ring(
+            mesh, bottom_ring_coords, bottom_corners, is_top=False
+        )
+        
         bottom_ring = ring_indices[0]
         
         if is_hollow:
             # 空心模式：生成环形端盖
             bottom_inner_ring = inner_ring_indices[0]
-            normal_down = R @ np.array([0, -1, 0])
-            normal_up = R @ np.array([0, 1, 0])
-            vn_down_idx = mesh.add_normal(normal_down[0], normal_down[1], normal_down[2])
-            vn_up_idx = mesh.add_normal(normal_up[0], normal_up[1], normal_up[2])
+            
+            # 内层端盖法线（朝内）
+            inner_ring_coords = [mesh.vertices[idx - 1] for idx, _ in inner_ring_indices[0]]
+            inner_cap_normals = compute_cap_normals_for_ring(
+                mesh, inner_ring_coords, bottom_corners, is_top=False, invert=True
+            )
             
             for i in range(segments):
                 next_i = (i + 1) % segments
@@ -1148,64 +1259,161 @@ def generate_nose_cone(mesh: Mesh, params: FuselageParams,
                 bi_next = bottom_inner_ring[next_i]
                 bi_i = bottom_inner_ring[i]
                 
-                # 底部环形端盖（两个三角面）
-                # 底部法线朝下：从底部看是逆时针 (bo_i -> bo_next -> bi_next -> bi_i)
+                vn_bo_i = bottom_cap_normals[i]
+                vn_bo_next = bottom_cap_normals[next_i]
+                vn_bi_i = inner_cap_normals[i]
+                vn_bi_next = inner_cap_normals[next_i]
+                
                 mesh.add_face(bo_i[0], bo_next[0], bi_next[0],
                              bo_i[1], bo_next[1], bi_next[1],
-                             vn_down_idx, vn_down_idx, vn_up_idx)
+                             vn_bo_i, vn_bo_next, vn_bi_next)
                 mesh.add_face(bo_i[0], bi_next[0], bi_i[0],
                              bo_i[1], bi_next[1], bi_i[1],
-                             vn_down_idx, vn_up_idx, vn_up_idx)
+                             vn_bo_i, vn_bi_next, vn_bi_i)
         else:
             # 实心模式：生成实心端盖
-            # 计算底部中心点
             center_y = -half_len * scale_y
             center_x = -params.offset_x * scale_x
             center_z = -params.offset_z * scale_z
             center_local = np.array([center_x, center_y, center_z])
             center_world = R @ center_local + pos
             
-            # 底部端盖使用统一的朝下法线
-            normal_down = R @ np.array([0, -1, 0])
-            vn_down_idx = mesh.add_normal(normal_down[0], normal_down[1], normal_down[2])
-            
             v_center = mesh.add_vertex(center_world[0], center_world[1], center_world[2])
             vt_center = mesh.add_uv(0.5, 0.5)
+            vn_center = mesh.add_normal(0, -1, 0)  # 中心点朝下
             
-            # 为底部端盖创建新的外圈顶点（使用朝下法线，不与侧面共享）
-            bottom_cap_indices = []
-            for i in range(segments):
-                # 复用侧面外圈顶点的位置和UV，但使用朝下法线
-                b_i = bottom_ring[i]
-                v_idx = mesh.add_vertex(
-                    mesh.vertices[b_i[0] - 1][0],
-                    mesh.vertices[b_i[0] - 1][1],
-                    mesh.vertices[b_i[0] - 1][2]
-                )
-                vt_idx = mesh.add_uv(
-                    mesh.uvs[b_i[1] - 1][0] if b_i[1] > 0 and b_i[1] <= len(mesh.uvs) else i / segments,
-                    mesh.uvs[b_i[1] - 1][1] if b_i[1] > 0 and b_i[1] <= len(mesh.uvs) else 0.0
-                )
-                # 存储: 顶点索引, UV索引, 法线索引(朝下)
-                bottom_cap_indices.append((v_idx, vt_idx, vn_down_idx))
-            
-            # 生成底部端盖三角面（使用朝下的法线）
             for i in range(segments):
                 next_i = (i + 1) % segments
-                bc_i = bottom_cap_indices[i]
-                bc_next = bottom_cap_indices[next_i]
-                mesh.add_face(v_center, bc_i[0], bc_next[0],
-                             vt_center, bc_i[1], bc_next[1],
-                             vn_down_idx, vn_down_idx, vn_down_idx)
+                b_i = bottom_ring[i]
+                b_next = bottom_ring[next_i]
+                vn_b_i = bottom_cap_normals[i]
+                vn_b_next = bottom_cap_normals[next_i]
+                
+                mesh.add_face(v_center, b_i[0], b_next[0],
+                             vt_center, b_i[1], b_next[1],
+                             vn_center, vn_b_i, vn_b_next)
     
     # 返回生成的顶点数量
     if is_hollow:
-        total_verts = num_rings * segments * 2  # 内外两层
+        total_verts = num_rings * segments * 2
     else:
         total_verts = num_rings * segments
         if params.bottom_scale_x > 1e-6 or params.bottom_scale_z > 1e-6:
-            total_verts += 1  # 底部中心点
+            total_verts += 1
     return total_verts
+
+
+def compute_cap_normals_for_ring(mesh, coords, corner_radii, is_top=True, invert=False):
+    """
+    计算端盖法线，根据夹角判断硬边/圆滑边
+    
+    参数:
+        mesh: 网格对象
+        coords: 顶点坐标列表
+        corner_radii: 圆角半径
+        is_top: 是否是顶面（决定Y方向）
+        invert: 是否反转法线（内层使用）
+    """
+    n = len(coords)
+    cap_normals = []
+    
+    # 计算中心点
+    center_x = sum(c[0] for c in coords) / n
+    center_z = sum(c[2] for c in coords) / n
+    
+    # 判断圆角程度
+    avg_corner_radius = 0.5
+    if corner_radii:
+        avg_corner_radius = sum(corner_radii) / len(corner_radii)
+    
+    # 圆滑阈值
+    smooth_threshold = math.radians(150)
+    if avg_corner_radius < 0.1:
+        smooth_threshold = math.radians(170)
+    elif avg_corner_radius > 0.9:
+        smooth_threshold = math.radians(135)
+    
+    for i in range(n):
+        prev_i = (i - 1) % n
+        next_i = (i + 1) % n
+        
+        v_curr = coords[i]
+        v_prev = coords[prev_i]
+        v_next = coords[next_i]
+        
+        # 计算两条边向量
+        edge_prev = (v_prev[0] - v_curr[0], v_prev[2] - v_curr[2])
+        edge_next = (v_next[0] - v_curr[0], v_next[2] - v_curr[2])
+        
+        # 计算夹角
+        len_prev = math.sqrt(edge_prev[0]**2 + edge_prev[1]**2)
+        len_next = math.sqrt(edge_next[0]**2 + edge_next[1]**2)
+        
+        if len_prev > 1e-6 and len_next > 1e-6:
+            edge_prev_n = (edge_prev[0] / len_prev, edge_prev[1] / len_prev)
+            edge_next_n = (edge_next[0] / len_next, edge_next[1] / len_next)
+            
+            dot = edge_prev_n[0] * edge_next_n[0] + edge_prev_n[1] * edge_next_n[1]
+            dot = max(-1, min(1, dot))
+            angle = math.acos(dot)
+        else:
+            angle = math.pi
+        
+        # 判断硬边/圆滑边
+        if angle >= smooth_threshold:
+            # 圆滑边：法线指向中心
+            dx = center_x - v_curr[0]
+            dz = center_z - v_curr[2]
+            len_h = math.sqrt(dx**2 + dz**2)
+            if len_h > 1e-6:
+                nx = dx / len_h
+                nz = dz / len_h
+            else:
+                nx, nz = 0, 0
+        else:
+            # 硬边：使用角平分线
+            bisector_x = -(edge_prev_n[0] + edge_next_n[0])
+            bisector_z = -(edge_prev_n[1] + edge_next_n[1])
+            bisector_len = math.sqrt(bisector_x**2 + bisector_z**2)
+            if bisector_len > 1e-6:
+                nx = bisector_x / bisector_len
+                nz = bisector_z / bisector_len
+            else:
+                dx = center_x - v_curr[0]
+                dz = center_z - v_curr[2]
+                len_h = math.sqrt(dx**2 + dz**2)
+                if len_h > 1e-6:
+                    nx = dx / len_h
+                    nz = dz / len_h
+                else:
+                    nx, nz = 0, 0
+        
+        # 混合法线
+        if avg_corner_radius > 0.01 and avg_corner_radius < 0.99:
+            mix_factor = avg_corner_radius
+            dx = center_x - v_curr[0]
+            dz = center_z - v_curr[2]
+            len_h = math.sqrt(dx**2 + dz**2)
+            if len_h > 1e-6:
+                radial_nx = dx / len_h
+                radial_nz = dz / len_h
+            else:
+                radial_nx, radial_nz = nx, nz
+            nx = nx * (1 - mix_factor) + radial_nx * mix_factor
+            nz = nz * (1 - mix_factor) + radial_nz * mix_factor
+            norm = math.sqrt(nx**2 + nz**2)
+            if norm > 1e-6:
+                nx /= norm
+                nz /= norm
+        
+        ny = 1.0 if is_top else -1.0
+        if invert:
+            nx, ny, nz = -nx, -ny, -nz
+        
+        vn_idx = mesh.add_normal(nx, ny, nz)
+        cap_normals.append(vn_idx)
+    
+    return cap_normals
 
 
 def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams, 
