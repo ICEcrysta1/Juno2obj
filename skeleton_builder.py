@@ -190,8 +190,8 @@ class SkeletonBuilder:
     def _assign_bindings(self):
         """为每个零件分配绑定关节
         
-        策略：从每个关节出发，向下遍历其子树，将所有非关节零件绑定到该关节。
-        如果遇到另一个关节，则停止该分支的遍历（由那个关节处理自己的子树）。
+        策略：从每个关节出发，使用BFS遍历所有可达的零件（通过连接关系，不考虑方向）。
+        将遍历到的非关节零件绑定到该关节，直到遇到另一个关节为止。
         """
         # 首先，所有关节绑定到自己
         for part_id in self.joint_parts:
@@ -201,61 +201,76 @@ class SkeletonBuilder:
                 is_joint=True
             )
         
-        # 从每个关节（不只是根关节）开始，向下遍历其子树
+        # 构建无向图（邻接表）- 连接是双向的
+        self._build_undirected_graph()
+        
+        # 从每个关节开始BFS遍历
         for part_id, joint in self.joints.items():
-            self._bind_subtree(part_id, joint.joint_id)
+            self._bind_connected_parts(part_id, joint.joint_id)
     
-    def _bind_subtree(self, root_part_id: str, joint_id: str):
-        """递归绑定子树中的所有零件到指定关节
+    def _build_undirected_graph(self):
+        """构建无向图，从连接数据中提取所有连接关系"""
+        self._undirected_graph: Dict[str, List[str]] = {}
+        
+        # 从 parent_to_children 添加边（已存在的父子关系）
+        for parent, children in self.parent_to_children.items():
+            if parent not in self._undirected_graph:
+                self._undirected_graph[parent] = []
+            for child in children:
+                self._undirected_graph[parent].append(child)
+                if child not in self._undirected_graph:
+                    self._undirected_graph[child] = []
+                self._undirected_graph[child].append(parent)
+        
+        # 从 child_to_parent 添加反向边（确保双向）
+        for child, parent in self.child_to_parent.items():
+            if child not in self._undirected_graph:
+                self._undirected_graph[child] = []
+            if parent not in self._undirected_graph[child]:
+                self._undirected_graph[child].append(parent)
+            
+            if parent not in self._undirected_graph:
+                self._undirected_graph[parent] = []
+            if child not in self._undirected_graph[parent]:
+                self._undirected_graph[parent].append(child)
+    
+    def _bind_connected_parts(self, start_part_id: str, joint_id: str):
+        """从起始零件开始，BFS遍历所有可达的非关节零件并绑定
         
         Args:
-            root_part_id: 子树的根零件ID（这是一个关节）
+            start_part_id: 起始零件ID（这是一个关节）
             joint_id: 要绑定到的关节ID
         """
-        # 获取该零件的所有直接子零件
-        children = self.parent_to_children.get(root_part_id, [])
+        from collections import deque
         
-        for child_id in children:
-            if child_id in self.joint_parts:
-                # 遇到另一个关节，跳过（它会由自己的_bind_subtree处理）
-                continue
+        queue = deque([start_part_id])
+        visited = {start_part_id}
+        
+        while queue:
+            current_id = queue.popleft()
             
-            if child_id not in self.bindings:
-                # 绑定该零件到当前关节
-                self.bindings[child_id] = Binding(
-                    part_id=child_id,
-                    joint_id=joint_id,
-                    is_joint=False
-                )
-                
-                # 递归处理该零件的子零件
-                self._bind_subtree_recursive(child_id, joint_id)
-    
-    def _bind_subtree_recursive(self, part_id: str, joint_id: str):
-        """递归绑定子树（非关节零件）
-        
-        Args:
-            part_id: 当前零件ID
-            joint_id: 要绑定到的关节ID
-        """
-        # 获取该零件的所有直接子零件
-        children = self.parent_to_children.get(part_id, [])
-        
-        for child_id in children:
-            if child_id in self.joint_parts:
-                # 遇到另一个关节，停止该分支
-                continue
+            # 获取相邻零件
+            neighbors = self._undirected_graph.get(current_id, [])
             
-            if child_id not in self.bindings:
-                # 绑定该零件到当前关节
-                self.bindings[child_id] = Binding(
-                    part_id=child_id,
-                    joint_id=joint_id,
-                    is_joint=False
-                )
+            for neighbor_id in neighbors:
+                if neighbor_id in visited:
+                    continue
                 
-                # 继续递归
-                self._bind_subtree_recursive(child_id, joint_id)
+                visited.add(neighbor_id)
+                
+                if neighbor_id in self.joint_parts:
+                    # 遇到另一个关节，停止该分支（不加入队列）
+                    continue
+                
+                if neighbor_id not in self.bindings:
+                    # 绑定该零件到当前关节
+                    self.bindings[neighbor_id] = Binding(
+                        part_id=neighbor_id,
+                        joint_id=joint_id,
+                        is_joint=False
+                    )
+                    # 继续遍历该零件的邻居
+                    queue.append(neighbor_id)
 
     
     def _get_root_joints(self) -> List[str]:
