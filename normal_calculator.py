@@ -90,6 +90,11 @@ class NormalCalculator:
         raw_faces = data['faces']
         ring_info = data.get('ring_info', {})
         
+        # 从 corner_radiuses 字段获取圆滑度信息（兼容新旧缓存格式）
+        corner_radiuses = data.get('corner_radiuses', [])
+        if corner_radiuses and 'corner_radiuses' not in ring_info:
+            ring_info['corner_radiuses'] = corner_radiuses
+        
         normals = []
         faces = []
         
@@ -121,6 +126,16 @@ class NormalCalculator:
         # 检测是否是鼻锥（多环结构）
         if ring_info.get('is_nose_cone'):
             return self._compute_nose_cone_normals(vertices, raw_faces, ring_info, normals)
+        
+        # 检测是否需要使用自动角度拆边法线
+        # 策略：检查 corner_radiuses 或者采样面角度变化
+        corner_radiuses = ring_info.get('corner_radiuses', [])
+        avg_corner_radius = sum(corner_radiuses) / len(corner_radiuses) if corner_radiuses else 0.5
+        
+        # 当圆滑度很低（< 0.1）时，使用基于角度的自动拆边
+        if avg_corner_radius < 0.1:
+            print(f"[NormalCalc]   检测到圆滑度={avg_corner_radius:.2f} < 0.1，使用自动角度拆边法线")
+            return self._compute_auto_split_normals(vertices, raw_faces, normals, angle_threshold=30.0)
         
         segments = ring_info.get('segments', 24)
         bottom_indices = ring_info.get('bottom_indices', [])
@@ -968,6 +983,166 @@ class NormalCalculator:
         
         normals.append((nx, ny, nz))
         return len(normals) - 1
+    
+    def _compute_auto_split_normals(self, vertices: List[Tuple[float, float, float]],
+                                    raw_faces: List[tuple],
+                                    normals: List[Tuple[float, float, float]],
+                                    angle_threshold: float = 30.0) -> List[tuple]:
+        """
+        基于相邻面角度自动计算拆边法线（类似Blender的标记锐边）
+        
+        当相邻面法线夹角 > threshold 时，在该边创建硬边（不同法线）
+        适用于圆滑度为0（接近方形）的圆柱体等形状
+        
+        原理：
+        1. 计算每个面的法线
+        2. 检测锐边（相邻面夹角 > threshold）
+        3. 基于锐边构建平滑组（非锐边连接的面共享法线）
+        4. 为每个(顶点, 平滑组)组合生成法线
+        
+        参数:
+            vertices: 顶点列表
+            raw_faces: 原始面数据 (v1,v2,v3,vt1,vt2,vt3,mat_name,part_id)
+            normals: 全局法线列表（会被修改）
+            angle_threshold: 角度阈值（度），默认30度
+        
+        返回:
+            带法线索引的面列表
+        """
+        from collections import defaultdict
+        
+        threshold_rad = math.radians(angle_threshold)
+        num_faces = len(raw_faces)
+        
+        if num_faces == 0:
+            return []
+        
+        # === 1. 计算所有面的法线 ===
+        face_normals = []
+        for raw_face in raw_faces:
+            v1, v2, v3 = raw_face[0], raw_face[1], raw_face[2]
+            
+            if v1 >= len(vertices) or v2 >= len(vertices) or v3 >= len(vertices):
+                face_normals.append((0.0, 1.0, 0.0))
+                continue
+            
+            p1, p2, p3 = vertices[v1], vertices[v2], vertices[v3]
+            
+            edge1 = (p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2])
+            edge2 = (p3[0] - p1[0], p3[1] - p1[1], p3[2] - p1[2])
+            nx = edge1[1] * edge2[2] - edge1[2] * edge2[1]
+            ny = edge1[2] * edge2[0] - edge1[0] * edge2[2]
+            nz = edge1[0] * edge2[1] - edge1[1] * edge2[0]
+            length = math.sqrt(nx**2 + ny**2 + nz**2)
+            
+            if length > 1e-6:
+                face_normals.append((nx/length, ny/length, nz/length))
+            else:
+                face_normals.append((0.0, 1.0, 0.0))
+        
+        # === 2. 构建边-面邻接表 ===
+        edge_faces = defaultdict(list)  # (min_v, max_v) -> [face_idx, ...]
+        
+        for face_idx, raw_face in enumerate(raw_faces):
+            v1, v2, v3 = raw_face[0], raw_face[1], raw_face[2]
+            edges = [(min(v1, v2), max(v1, v2)),
+                     (min(v2, v3), max(v2, v3)),
+                     (min(v3, v1), max(v3, v1))]
+            for edge in edges:
+                edge_faces[edge].append(face_idx)
+        
+        # === 3. 检测锐边 ===
+        sharp_edges = set()
+        
+        for edge, adjacent_faces in edge_faces.items():
+            if len(adjacent_faces) == 2:
+                f1, f2 = adjacent_faces[0], adjacent_faces[1]
+                n1, n2 = face_normals[f1], face_normals[f2]
+                
+                # 计算夹角
+                dot = n1[0]*n2[0] + n1[1]*n2[1] + n1[2]*n2[2]
+                dot = max(-1.0, min(1.0, dot))
+                angle = math.acos(dot)
+                
+                if angle > threshold_rad:
+                    sharp_edges.add(edge)
+        
+        # === 4. 基于锐边构建平滑组（洪水填充）===
+        face_smooth_group = {}  # face_idx -> group_id
+        current_group = 0
+        
+        def flood_fill_group(start_face, group_id):
+            stack = [start_face]
+            face_smooth_group[start_face] = group_id
+            
+            while stack:
+                face_idx = stack.pop()
+                v1, v2, v3 = raw_faces[face_idx][0], raw_faces[face_idx][1], raw_faces[face_idx][2]
+                edges = [(min(v1, v2), max(v1, v2)),
+                         (min(v2, v3), max(v2, v3)),
+                         (min(v3, v1), max(v3, v1))]
+                
+                for edge in edges:
+                    if edge not in sharp_edges:  # 非锐边才能穿越
+                        for adj_face in edge_faces[edge]:
+                            if adj_face not in face_smooth_group:
+                                face_smooth_group[adj_face] = group_id
+                                stack.append(adj_face)
+        
+        for face_idx in range(num_faces):
+            if face_idx not in face_smooth_group:
+                flood_fill_group(face_idx, current_group)
+                current_group += 1
+        
+        # === 5. 为每个(顶点, 平滑组)组合累加法线 ===
+        vertex_group_acc = defaultdict(lambda: [0.0, 0.0, 0.0])  # (v_idx, group_id) -> [nx, ny, nz]
+        
+        for face_idx, raw_face in enumerate(raw_faces):
+            group_id = face_smooth_group[face_idx]
+            face_normal = face_normals[face_idx]
+            
+            for v_idx in [raw_face[0], raw_face[1], raw_face[2]]:
+                key = (v_idx, group_id)
+                vertex_group_acc[key][0] += face_normal[0]
+                vertex_group_acc[key][1] += face_normal[1]
+                vertex_group_acc[key][2] += face_normal[2]
+        
+        # 归一化并存储到全局法线列表
+        normal_index_map = {}  # (v_idx, group_id) -> normal_idx
+        for key, acc_normal in vertex_group_acc.items():
+            length = math.sqrt(acc_normal[0]**2 + acc_normal[1]**2 + acc_normal[2]**2)
+            if length > 1e-6:
+                final_normal = (acc_normal[0]/length, acc_normal[1]/length, acc_normal[2]/length)
+            else:
+                final_normal = (0.0, 1.0, 0.0)
+            
+            normal_idx = len(normals)
+            normals.append(final_normal)
+            normal_index_map[key] = normal_idx
+        
+        # === 6. 构建带法线的面列表 ===
+        faces = []
+        for face_idx, raw_face in enumerate(raw_faces):
+            v1, v2, v3, vt1, vt2, vt3, mat_name, part_id = raw_face
+            group_id = face_smooth_group[face_idx]
+            
+            vn1 = normal_index_map.get((v1, group_id), -1)
+            vn2 = normal_index_map.get((v2, group_id), -1)
+            vn3 = normal_index_map.get((v3, group_id), -1)
+            
+            # 如果找不到法线，使用面法线
+            if vn1 < 0 or vn2 < 0 or vn3 < 0:
+                vn_fallback = self._compute_face_normal(vertices, v1, v2, v3, normals)
+                if vn1 < 0:
+                    vn1 = vn_fallback
+                if vn2 < 0:
+                    vn2 = vn_fallback
+                if vn3 < 0:
+                    vn3 = vn_fallback
+            
+            faces.append((v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat_name, part_id))
+        
+        return faces
     
     def save_cache(self, cache_dir: str) -> List[str]:
         """保存带法线的网格到缓存文件"""

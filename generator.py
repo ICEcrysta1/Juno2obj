@@ -338,6 +338,7 @@ class MeshGenerator:
             'top_inner_indices': [idx for idx, _ in top_inner_indices] if is_inlet else None,
             'bottom_corners': bottom_corners,
             'top_corners': top_corners,
+            'corner_radiuses': params.corner_radiuses,  # 添加完整圆滑度信息
             'is_inlet': is_inlet,
             'part_type': part.part_type,
             'segments': self.segments,
