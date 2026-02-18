@@ -207,15 +207,125 @@ class NormalCalculator:
                 normals.append(inner_cap_normals[i])
                 inner_cap_normal_map[idx] = vn
         
+        # 分类面（用于空心零件的拆边法线）
+        bottom_set = set(bottom_indices)
+        top_set = set(top_indices)
+        bottom_inner_set = set(bottom_inner_indices) if bottom_inner_indices else set()
+        top_inner_set = set(top_inner_indices) if top_inner_indices else set()
+        
+        outer_side_faces = set()
+        outer_cap_bottom_faces = set()
+        outer_cap_top_faces = set()
+        inner_side_faces = set()
+        inner_cap_bottom_faces = set()
+        inner_cap_top_faces = set()
+        
+        if is_inlet and bottom_inner_indices and top_inner_indices:
+            # 空心零件 - 需要分类面
+            for face_idx, raw_face in enumerate(raw_faces):
+                v1, v2, v3 = raw_face[0], raw_face[1], raw_face[2]
+                verts = {v1, v2, v3}
+                
+                # 检查是否是底面端盖（连接外层和内层底面）
+                if verts.issubset(bottom_set.union(bottom_inner_set)):
+                    has_outer = len(verts.intersection(bottom_set)) > 0
+                    has_inner = len(verts.intersection(bottom_inner_set)) > 0
+                    if has_outer and has_inner:
+                        outer_cap_bottom_faces.add(face_idx)
+                    elif has_outer:
+                        outer_cap_bottom_faces.add(face_idx)
+                    else:
+                        inner_cap_bottom_faces.add(face_idx)
+                # 检查是否是顶面端盖
+                elif verts.issubset(top_set.union(top_inner_set)):
+                    has_outer = len(verts.intersection(top_set)) > 0
+                    has_inner = len(verts.intersection(top_inner_set)) > 0
+                    if has_outer and has_inner:
+                        outer_cap_top_faces.add(face_idx)
+                    elif has_outer:
+                        outer_cap_top_faces.add(face_idx)
+                    else:
+                        inner_cap_top_faces.add(face_idx)
+                # 检查是否是外侧面
+                elif verts.issubset(bottom_set.union(top_set)):
+                    outer_side_faces.add(face_idx)
+                # 检查是否是内侧面
+                elif verts.issubset(bottom_inner_set.union(top_inner_set)):
+                    inner_side_faces.add(face_idx)
+        
+        # 为底面端盖面计算正确的法线（垂直于Y轴，局部空间）
+        outer_cap_bottom_normal_map = {}  # 外层底面端盖法线
+        inner_cap_bottom_normal_map = {}  # 内层底面端盖法线
+        outer_cap_top_normal_map = {}     # 外层顶面端盖法线
+        inner_cap_top_normal_map = {}     # 内层顶面端盖法线
+        
+        if is_inlet and bottom_inner_indices and top_inner_indices:
+            # 外层底面端盖法线：朝上 (0, 1, 0)
+            for idx in bottom_indices:
+                vn_idx = len(normals)
+                normals.append((0.0, 1.0, 0.0))
+                outer_cap_bottom_normal_map[idx] = vn_idx
+            
+            # 内层底面端盖法线：朝下 (0, -1, 0)
+            for idx in bottom_inner_indices:
+                vn_idx = len(normals)
+                normals.append((0.0, -1.0, 0.0))
+                inner_cap_bottom_normal_map[idx] = vn_idx
+            
+            # 外层顶面端盖法线：朝下 (0, -1, 0)
+            for idx in top_indices:
+                vn_idx = len(normals)
+                normals.append((0.0, -1.0, 0.0))
+                outer_cap_top_normal_map[idx] = vn_idx
+            
+            # 内层顶面端盖法线：朝上 (0, 1, 0)
+            for idx in top_inner_indices:
+                vn_idx = len(normals)
+                normals.append((0.0, 1.0, 0.0))
+                inner_cap_top_normal_map[idx] = vn_idx
+        
         # 为每个面分配法线
         faces = []
-        for raw_face in raw_faces:
+        for face_idx, raw_face in enumerate(raw_faces):
             v1, v2, v3, vt1, vt2, vt3, mat_name, part_id = raw_face
             
-            # 根据顶点位置决定使用哪种法线
-            vn1 = self._get_normal_for_vertex(v1, side_normal_map, cap_normal_map, inner_side_normal_map, inner_cap_normal_map)
-            vn2 = self._get_normal_for_vertex(v2, side_normal_map, cap_normal_map, inner_side_normal_map, inner_cap_normal_map)
-            vn3 = self._get_normal_for_vertex(v3, side_normal_map, cap_normal_map, inner_side_normal_map, inner_cap_normal_map)
+            if is_inlet and bottom_inner_indices and top_inner_indices:
+                # 空心零件 - 根据面类型选择法线（拆边法线）
+                if face_idx in outer_cap_bottom_faces:
+                    # 外层底面端盖 - 使用径向朝外的法线
+                    vn1 = outer_cap_bottom_normal_map.get(v1, cap_normal_map.get(v1, -1))
+                    vn2 = outer_cap_bottom_normal_map.get(v2, cap_normal_map.get(v2, -1))
+                    vn3 = outer_cap_bottom_normal_map.get(v3, cap_normal_map.get(v3, -1))
+                elif face_idx in outer_cap_top_faces:
+                    # 外层顶面端盖 - 使用径向朝外的法线
+                    vn1 = outer_cap_top_normal_map.get(v1, cap_normal_map.get(v1, -1))
+                    vn2 = outer_cap_top_normal_map.get(v2, cap_normal_map.get(v2, -1))
+                    vn3 = outer_cap_top_normal_map.get(v3, cap_normal_map.get(v3, -1))
+                elif face_idx in inner_cap_bottom_faces:
+                    # 内层底面端盖 - 使用径向朝内的法线
+                    vn1 = inner_cap_bottom_normal_map.get(v1, inner_cap_normal_map.get(v1, -1))
+                    vn2 = inner_cap_bottom_normal_map.get(v2, inner_cap_normal_map.get(v2, -1))
+                    vn3 = inner_cap_bottom_normal_map.get(v3, inner_cap_normal_map.get(v3, -1))
+                elif face_idx in inner_cap_top_faces:
+                    # 内层顶面端盖 - 使用径向朝内的法线
+                    vn1 = inner_cap_top_normal_map.get(v1, inner_cap_normal_map.get(v1, -1))
+                    vn2 = inner_cap_normal_map.get(v2, -1)
+                    vn3 = inner_cap_normal_map.get(v3, -1)
+                elif face_idx in outer_side_faces:
+                    vn1 = side_normal_map.get(v1, -1)
+                    vn2 = side_normal_map.get(v2, -1)
+                    vn3 = side_normal_map.get(v3, -1)
+                elif face_idx in inner_side_faces:
+                    vn1 = inner_side_normal_map.get(v1, -1)
+                    vn2 = inner_side_normal_map.get(v2, -1)
+                    vn3 = inner_side_normal_map.get(v3, -1)
+                else:
+                    vn1 = vn2 = vn3 = -1
+            else:
+                # 实心零件 - 使用原来的逻辑
+                vn1 = self._get_normal_for_vertex(v1, side_normal_map, cap_normal_map, inner_side_normal_map, inner_cap_normal_map)
+                vn2 = self._get_normal_for_vertex(v2, side_normal_map, cap_normal_map, inner_side_normal_map, inner_cap_normal_map)
+                vn3 = self._get_normal_for_vertex(v3, side_normal_map, cap_normal_map, inner_side_normal_map, inner_cap_normal_map)
             
             # 如果找不到预计算的法线，计算面法线
             if vn1 < 0:

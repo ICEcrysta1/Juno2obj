@@ -98,18 +98,18 @@
         <Fuselage bottomScale="2,2" deadWeightPercentage="0" deformations="1,0,1" depthCurve="0" offset="1.9015E-14,1,-8.524818E-29" shellDensityOverride="-1" topScale="0,0" volume="7.00699234" volumeInner="6.894288" version="3" />
         <FuelTank capacity="3853.845947265625" fuelType="None" subPriority="24" />
       </Part>
-      <Part id="21" partType="NoseCone1" position="13.37827,-1.052868,-2.326358" rotation="0,0,0" commandPodId="5" materials="2,4,4,2,2" texture="Fuselage11">
+      <Part id="21" partType="Strut1" position="13.37827,-1.052868,-2.326358" rotation="0,0,0" commandPodId="5" materials="2,4,4,2,2" texture="Fuselage11">
         <Drag drag="0.3165696,0.1569752,0.6679998,0.5395998,0.2937999,0.4263999" area="0.4749415,0.4749415,0.8330001,0.8330001,0.5269998,0.5269998" />
         <Config centerOfMass="-0.2857141,-0.2857141,-0.22145" heatShieldScale="0" />
         <Fuselage bottomScale="0.2,0.2" deadWeightPercentage="0" deformations="1,0,1" depthCurve="0" offset="1,1,1" shellDensityOverride="-1" topScale="0.1,0.1" volume="0.08722275" volumeInner="0.07482103" version="3" />
       </Part>
-      <Part id="22" partType="NoseCone1" position="7.95159,16.99369,-2.38639" rotation="-1.024528E-05,5.008957E-06,-4.478356E-13" activationStage="0" commandPodId="5" materials="0,4,4,0,0" texture="Default">
+      <Part id="22" partType="FairingBase1" position="7.95159,16.99369,-2.38639" rotation="-1.024528E-05,5.008957E-06,-4.478356E-13" activationStage="0" commandPodId="5" materials="0,4,4,0,0" texture="Default">
         <Drag drag="0,0.7743413,0.8737337,0.06966662,0.8407329,0.8407328" area="0,1.068618,1.716999,0.1869999,1.156,1.156" />
         <Config centerOfMass="1.011649E-09,0.02014652,5.220826E-08" heatShield="34.30744" heatShieldMass="0.0857686" heatShieldScale="0.1" />
         <Fuselage bottomScale="1,1" deadWeightPercentage="-10" deformations="0,0,0" depthCurve="0" meshMassMultiplier="0.8" offset="0,0.25,0" shellDensityOverride="-1" topScale="1.2,1.2" volume="1.88420272" volumeInner="1.82777727" version="3" />
         <Fairing />
       </Part>
-      <Part id="23" partType="NoseCone1" position="7.95159,16.07894,1.611675" rotation="1.185057E-05,180,180" commandPodId="5" materials="0,4,4,0,0" texture="Default">
+      <Part id="23" partType="Fairing1" position="7.95159,16.07894,1.611675" rotation="1.185057E-05,180,180" commandPodId="5" materials="0,4,4,0,0" texture="Default">
         <Drag drag="1.310396,0.1825266,0.2039999,0,3.641996,3.641996" area="1.884923,0.4749415,0.2039999,0,4.59,4.59" />
         <Config centerOfMass="3.793465E-09,-7.288332E-09,4.961272E-08" heatShield="39.3954468" heatShieldMass="0.098488614" heatShieldScale="0.1" />
         <Fuselage bottomScale="1.2,1.2" deadWeightPercentage="-10" deformations="0,0,0" depthCurve="0" meshMassMultiplier="0.8" offset="0,1,0" shellDensityOverride="-1" topScale="1.2,1.2" volume="8.944787" volumeInner="8.824879" version="3" />
