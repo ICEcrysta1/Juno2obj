@@ -119,6 +119,9 @@ class SR2XMLParser:
             self._parse_nose_cone_part(part_elem, part_data, part_type)
         elif part_type == 'FairingNoseCone1':
             self._parse_fairing_nose_cone_part(part_elem, part_data, part_type)
+        elif part_type in ('Rotator1', 'HingeRotator1'):
+            # 关节零件 - 只解析基本位置信息，不需要几何
+            self._parse_joint_part(part_elem, part_data, part_type)
         else:
             # 不支持的零件类型
             return None
@@ -239,6 +242,18 @@ class SR2XMLParser:
         
         print(f"[Parser]   FairingNoseCone {part_data.part_id}: "
               f"length={params.length:.3f}, wall={part_data.wall_thickness:.3f}")
+    
+    def _parse_joint_part(self, part_elem: ET.Element, part_data: PartData, part_type: str):
+        """解析关节零件（Rotator1/HingeRotator1）
+        
+        关节零件不需要生成几何体，只需要位置和旋转信息
+        """
+        # 关节零件不需要 Fuselage 参数
+        # 只需要基本的位置和旋转（已在 _parse_part 中解析）
+        
+        print(f"[Parser]   Joint {part_data.part_id}: "
+              f"type={part_type}, "
+              f"pos=({part_data.position[0]:.2f}, {part_data.position[1]:.2f}, {part_data.position[2]:.2f})")
     
     def save_to_json(self, output_file: str) -> str:
         """将解析结果保存为JSON文件"""
