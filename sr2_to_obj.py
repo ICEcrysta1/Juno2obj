@@ -471,6 +471,110 @@ def apply_clamp_to_ring(coords: List[Tuple[float, float, float]],
     return new_coords
 
 
+def compute_normals_after_transform(mesh, bottom_v_indices, top_v_indices, segments):
+    """
+    在所有变换完成后，基于最终顶点位置计算法线
+    
+    参数:
+        mesh: 网格对象
+        bottom_v_indices: 底部顶点索引列表 (1-based)
+        top_v_indices: 顶部顶点索引列表 (1-based)
+        segments: 分段数
+    
+    返回:
+        法线索引字典: {'bottom_side': [...], 'top_side': [...], 'bottom_cap': idx, 'top_cap': idx}
+    """
+    normal_indices = {
+        'bottom_side': [],
+        'top_side': [],
+        'bottom_cap': None,
+        'top_cap': None
+    }
+    
+    # 获取变换后的顶点坐标
+    bottom_coords = [mesh.vertices[idx - 1] for idx in bottom_v_indices]
+    top_coords = [mesh.vertices[idx - 1] for idx in top_v_indices]
+    
+    # 计算实际中心轴（考虑offset）
+    bottom_center = (
+        sum(c[0] for c in bottom_coords) / len(bottom_coords),
+        sum(c[1] for c in bottom_coords) / len(bottom_coords),
+        sum(c[2] for c in bottom_coords) / len(bottom_coords)
+    )
+    top_center = (
+        sum(c[0] for c in top_coords) / len(top_coords),
+        sum(c[1] for c in top_coords) / len(top_coords),
+        sum(c[2] for c in top_coords) / len(top_coords)
+    )
+    
+    # 计算侧面法线
+    for i in range(segments):
+        vb = bottom_coords[i]
+        vt = top_coords[i]
+        
+        # 计算从中心轴指向顶点的水平方向
+        dx_bottom = vb[0] - bottom_center[0]
+        dz_bottom = vb[2] - bottom_center[2]
+        dx_top = vt[0] - top_center[0]
+        dz_top = vt[2] - top_center[2]
+        
+        # 归一化水平分量
+        h_bottom = math.sqrt(dx_bottom**2 + dz_bottom**2)
+        h_top = math.sqrt(dx_top**2 + dz_top**2)
+        
+        if h_bottom > 1e-6:
+            nx_bottom = dx_bottom / h_bottom
+            nz_bottom = dz_bottom / h_bottom
+        else:
+            angle = i * 2 * math.pi / segments
+            nx_bottom = math.cos(angle)
+            nz_bottom = math.sin(angle)
+            
+        if h_top > 1e-6:
+            nx_top = dx_top / h_top
+            nz_top = dz_top / h_top
+        else:
+            angle = i * 2 * math.pi / segments
+            nx_top = math.cos(angle)
+            nz_top = math.sin(angle)
+        
+        # 计算Y方向斜率（用于锥形侧面）
+        height = vt[1] - vb[1]
+        if abs(height) > 1e-6:
+            slope = (h_top - h_bottom) / height
+            ny_bottom = -slope * math.sqrt(nx_bottom**2 + nz_bottom**2)
+            ny_top = -slope * math.sqrt(nx_top**2 + nz_top**2)
+        else:
+            ny_bottom = 0.0
+            ny_top = 0.0
+        
+        # 归一化
+        norm_bottom = math.sqrt(nx_bottom**2 + ny_bottom**2 + nz_bottom**2)
+        norm_top = math.sqrt(nx_top**2 + ny_top**2 + nz_top**2)
+        
+        if norm_bottom > 1e-6:
+            nx_bottom /= norm_bottom
+            ny_bottom /= norm_bottom
+            nz_bottom /= norm_bottom
+        if norm_top > 1e-6:
+            nx_top /= norm_top
+            ny_top /= norm_top
+            nz_top /= norm_top
+        
+        # 添加法线
+        vn_bottom_idx = mesh.add_normal(nx_bottom, ny_bottom, nz_bottom)
+        vn_top_idx = mesh.add_normal(nx_top, ny_top, nz_top)
+        
+        normal_indices['bottom_side'].append(vn_bottom_idx)
+        normal_indices['top_side'].append(vn_top_idx)
+    
+    # 端盖法线
+    normal_indices['bottom_cap'] = mesh.add_normal(0, -1, 0)
+    normal_indices['top_cap'] = mesh.add_normal(0, 1, 0)
+    
+    return normal_indices
+
+
 def get_rounded_rect_point(angle: float, radius_x: float, radius_z: float, 
                            corner_radii: Tuple[float, ...],
                            deformation: float = 0.0) -> Tuple[float, float]:
@@ -1135,16 +1239,9 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             ]
     
     # ========== 第四步：生成网格顶点 ==========
-    # 预计算统一的顶面法线（所有顶面顶点共享）
-    # 底面法线朝下，顶面法线朝上
-    normal_down = np.array([0, -1, 0])
-    normal_up = np.array([0, 1, 0])
-    world_normal_down = R @ normal_down
-    world_normal_up = R @ normal_up
-    vn_down_idx = mesh.add_normal(world_normal_down[0], world_normal_down[1], world_normal_down[2])
-    vn_up_idx = mesh.add_normal(world_normal_up[0], world_normal_up[1], world_normal_up[2])
+    # 只添加顶点和UV，不计算法线（法线在所有变换完成后计算）
     
-    # 计算有效半径（半径 * scale）
+    # 计算有效半径（半径 * scale）- 用于内圈计算
     bottom_rx = params.radius_x * params.bottom_scale_x
     bottom_rz = params.radius_z * params.bottom_scale_z
     top_rx = params.radius_x * params.top_scale_x
@@ -1158,8 +1255,8 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
         inner_top_rz = max(0, top_rz - inlet_wall_thickness)
     else:
         inner_bottom_rx = inner_bottom_rz = inner_top_rx = inner_top_rz = 0.0
+    
     for i in range(segments):
-        angle = i * angle_step
         bx, by, bz = squeezed_bottom[i]
         tx, ty, tz = squeezed_top[i]
         
@@ -1175,78 +1272,18 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
         local_t = np.array([tx, ty, tz])
         world_t = R @ local_t + pos
         
-        # 计算法线 (基于缩放后的半径)
-        cos_a = math.cos(angle)
-        sin_a = math.sin(angle)
-
-        # 计算锥形斜率用于侧面法线
-        # 侧面法线应该垂直于锥面斜线
-        height = params.length  # 圆柱高度
-
-        # 计算斜率 (半径随高度的变化率)
-        # slope > 0 表示向上扩张, slope < 0 表示向上收窄
-        if height > 0:
-            slope_x = (top_rx - bottom_rx) / height
-            slope_z = (top_rz - bottom_rz) / height
-        else:
-            slope_x = slope_z = 0.0
-
-        # 计算椭圆锥侧面法线 (基于隐式函数梯度)
-        # 椭圆锥表面: (x/rx(y))^2 + (z/rz(y))^2 = 1
-        # 法线方向 = 梯度方向
-        # 在底部边缘: nx = bottom_rz*cos(a), nz = bottom_rx*sin(a)
-        #             ny = -bottom_rz*slope_x*cos^2(a) - bottom_rx*slope_z*sin^2(a)
-
-        if bottom_rx > 1e-6 and bottom_rz > 1e-6:
-            # 计算未归一化的法线分量
-            nbx = bottom_rz * cos_a
-            nbz = bottom_rx * sin_a
-            # Y分量: 负号因为slope为负时(向上收窄),法线应该向上
-            nby = -bottom_rz * slope_x * cos_a * cos_a - bottom_rx * slope_z * sin_a * sin_a
-        elif bottom_rx > 1e-6:
-            # 只有X方向有半径 (退化为平板或线条)
-            nbx = 0.0
-            nbz = (1.0 if sin_a > 0 else -1.0) if bottom_rz <= 1e-6 else bottom_rx * sin_a
-            nby = -bottom_rx * slope_z * sin_a * sin_a
-        elif bottom_rz > 1e-6:
-            # 只有Z方向有半径
-            nbx = (1.0 if cos_a > 0 else -1.0) if bottom_rx <= 1e-6 else bottom_rz * cos_a
-            nbz = 0.0
-            nby = -bottom_rz * slope_x * cos_a * cos_a
-        else:
-            # 退化为点
-            nbx, nbz = cos_a, sin_a
-            nby = 0.0
-
-        # 归一化法线
-        norm = math.sqrt(nbx**2 + nby**2 + nbz**2)
-        if norm > 0:
-            nbx /= norm
-            nby /= norm
-            nbz /= norm
-        normal_b_side = np.array([nbx, nby, nbz])
-        world_normal_b_side = R @ normal_b_side
-        vn_b_side_idx = mesh.add_normal(world_normal_b_side[0], world_normal_b_side[1], world_normal_b_side[2])
-        
-        # 顶部侧面法线 (与底部相同，确保侧面平滑)
-        normal_t_side = np.array([nbx, nby, nbz])  # 复用底部法线，保持侧面平滑
-        world_normal_t_side = R @ normal_t_side
-        vn_t_side_idx = mesh.add_normal(world_normal_t_side[0], world_normal_t_side[1], world_normal_t_side[2])
-        
         # UV: u沿圆周
         u = i / segments
         
-        # 添加底部外圈顶点（侧面使用侧面法线，端盖使用统一法线）
+        # 添加底部外圈顶点（只存储顶点和UV索引）
         v_idx_b = mesh.add_vertex(world_b[0], world_b[1], world_b[2])
         vt_idx_b = mesh.add_uv(u, 0.0)
-        # 存储: 顶点索引, UV索引, 侧面法线索引, 端盖法线索引(统一朝下)
-        bottom_indices.append((v_idx_b, vt_idx_b, vn_b_side_idx, vn_down_idx))
+        bottom_indices.append((v_idx_b, vt_idx_b))
         
         # 添加顶部外圈顶点
         v_idx_t = mesh.add_vertex(world_t[0], world_t[1], world_t[2])
         vt_idx_t = mesh.add_uv(u, 1.0)
-        # 存储: 顶点索引, UV索引, 侧面法线索引, 端盖法线索引(统一朝上)
-        top_indices.append((v_idx_t, vt_idx_t, vn_t_side_idx, vn_up_idx))
+        top_indices.append((v_idx_t, vt_idx_t))
         
         # Inlet模式：添加内圈顶点
         if is_inlet:
@@ -1263,26 +1300,44 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             local_ti = np.array([txi, tyi, tzi])
             world_ti = R @ local_ti + pos
             
-            # 内圈法线 - 朝内（指向空心内部）
-            # 与外圈法线方向相反，但都垂直于同一锥面
-            normal_bi = np.array([-nbx, -nby, -nbz])
-            normal_ti = np.array([-nbx, -nby, -nbz])
-            world_normal_bi = R @ normal_bi
-            world_normal_ti = R @ normal_ti
-            
             # 添加底部内圈顶点
             v_idx_bi = mesh.add_vertex(world_bi[0], world_bi[1], world_bi[2])
-            vn_idx_bi = mesh.add_normal(world_normal_bi[0], world_normal_bi[1], world_normal_bi[2])
             vt_idx_bi = mesh.add_uv(u, 0.0)
-            # 内圈底面法线朝上（指向空心内部）
-            bottom_inner_indices.append((v_idx_bi, vt_idx_bi, vn_idx_bi, vn_up_idx))
+            bottom_inner_indices.append((v_idx_bi, vt_idx_bi))
 
             # 添加顶部内圈顶点
             v_idx_ti = mesh.add_vertex(world_ti[0], world_ti[1], world_ti[2])
-            vn_idx_ti = mesh.add_normal(world_normal_ti[0], world_normal_ti[1], world_normal_ti[2])
             vt_idx_ti = mesh.add_uv(u, 1.0)
-            # 内圈顶面法线朝下（指向空心内部）
-            top_inner_indices.append((v_idx_ti, vt_idx_ti, vn_idx_ti, vn_down_idx))
+            top_inner_indices.append((v_idx_ti, vt_idx_ti))
+    
+    # ========== 新增：基于变换后的顶点计算法线 ==========
+    
+    # 提取顶点索引列表
+    bottom_v_indices = [idx for idx, _ in bottom_indices]
+    top_v_indices = [idx for idx, _ in top_indices]
+    
+    # 计算法线
+    normal_indices = compute_normals_after_transform(
+        mesh, bottom_v_indices, top_v_indices, segments
+    )
+    
+    # Inlet模式：计算内圈法线（与外圈相反）
+    inner_normal_indices = None
+    if is_inlet:
+        bottom_inner_v_indices = [idx for idx, _ in bottom_inner_indices]
+        top_inner_v_indices = [idx for idx, _ in top_inner_indices]
+        
+        inner_normal_indices = compute_normals_after_transform(
+            mesh, bottom_inner_v_indices, top_inner_v_indices, segments
+        )
+        # 内圈法线朝内（取反）
+        for key in ['bottom_side', 'top_side']:
+            inverted = []
+            for ni in inner_normal_indices[key]:
+                nx, ny, nz = mesh.normals[ni - 1]
+                inverted_ni = mesh.add_normal(-nx, -ny, -nz)
+                inverted.append(inverted_ni)
+            inner_normal_indices[key] = inverted
     
     # 生成侧面四边形
     for i in range(segments):
@@ -1290,20 +1345,26 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
         
         # 当前四边形的四个顶点
         # bottom[i], bottom[next], top[next], top[i]
-        # 索引: 0=v_idx, 1=vt_idx, 2=vn_side_idx(侧面法线), 3=vn_cap_idx(端盖法线)
+        # 索引: 0=v_idx, 1=vt_idx
         b_i = bottom_indices[i]
         b_next = bottom_indices[next_i]
         t_next = top_indices[next_i]
         t_i = top_indices[i]
         
-        # 分解为两个三角面，使用侧面法线 (索引2)
+        # 使用新计算的法线
+        vn_b = normal_indices['bottom_side'][i]
+        vn_b_next = normal_indices['bottom_side'][next_i]
+        vn_t = normal_indices['top_side'][i]
+        vn_t_next = normal_indices['top_side'][next_i]
+        
+        # 分解为两个三角面
         # 逆时针顺序：(b_i, t_i, t_next) 和 (b_i, t_next, b_next)
         mesh.add_face(b_i[0], t_i[0], t_next[0],
                      b_i[1], t_i[1], t_next[1],
-                     b_i[2], t_i[2], t_next[2])
+                     vn_b, vn_t, vn_t_next)
         mesh.add_face(b_i[0], t_next[0], b_next[0],
                      b_i[1], t_next[1], b_next[1],
-                     b_i[2], t_next[2], b_next[2])
+                     vn_b, vn_t_next, vn_b_next)
     
     # Inlet模式：生成内侧面
     if is_inlet:
@@ -1314,20 +1375,25 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             ti_next = top_inner_indices[next_i]
             ti_i = top_inner_indices[i]
             
-            # 内侧面（法线朝内，面的顺序与法线方向相反）
+            # 内侧面（法线朝内）
+            vn_bi = inner_normal_indices['bottom_side'][i]
+            vn_bi_next = inner_normal_indices['bottom_side'][next_i]
+            vn_ti = inner_normal_indices['top_side'][i]
+            vn_ti_next = inner_normal_indices['top_side'][next_i]
+            
             # 从内部看是顺时针，正面朝外（因为法线朝内）
-            # 内圈存储的也是: 0=v_idx, 1=vt_idx, 2=vn_side_idx, 3=vn_cap_idx
             mesh.add_face(bi_i[0], ti_next[0], ti_i[0],
                          bi_i[1], ti_next[1], ti_i[1],
-                         bi_i[2], ti_next[2], ti_i[2])
+                         vn_bi, vn_ti_next, vn_ti)
             mesh.add_face(bi_i[0], bi_next[0], ti_next[0],
                          bi_i[1], bi_next[1], ti_next[1],
-                         bi_i[2], bi_next[2], ti_next[2])
+                         vn_bi, vn_bi_next, vn_ti_next)
     
     # 生成端盖
     if is_inlet:
         # Inlet模式：生成环形端盖
-        # Inlet模式端盖使用外圈存储的vn_down_idx/vn_up_idx（已经在上面创建）
+        vn_down = normal_indices['bottom_cap']
+        vn_up = normal_indices['top_cap']
         
         for i in range(segments):
             next_i = (i + 1) % segments
@@ -1337,14 +1403,13 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             bi_i = bottom_inner_indices[i]
             
             # 底部环形端盖（两个三角面）
-            # 外圈使用端盖法线(索引3)，内圈也使用端盖法线(索引3)
             # 底部法线朝下：从底部看是逆时针 (bo_i -> bo_next -> bi_next -> bi_i)
             mesh.add_face(bo_i[0], bo_next[0], bi_next[0],
                          bo_i[1], bo_next[1], bi_next[1],
-                         bo_i[3], bo_next[3], bi_next[3])
+                         vn_down, vn_down, vn_down)
             mesh.add_face(bo_i[0], bi_next[0], bi_i[0],
                          bo_i[1], bi_next[1], bi_i[1],
-                         bo_i[3], bi_next[3], bi_i[3])
+                         vn_down, vn_down, vn_down)
         
         for i in range(segments):
             next_i = (i + 1) % segments
@@ -1357,14 +1422,17 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             # 顶部法线朝上：从顶部看是逆时针 (to_i -> ti_i -> ti_next -> to_next)
             mesh.add_face(to_i[0], ti_i[0], ti_next[0],
                          to_i[1], ti_i[1], ti_next[1],
-                         to_i[3], ti_i[3], ti_next[3])
+                         vn_up, vn_up, vn_up)
             mesh.add_face(to_i[0], ti_next[0], to_next[0],
                          to_i[1], ti_next[1], to_next[1],
-                         to_i[3], ti_next[3], to_next[3])
+                         vn_up, vn_up, vn_up)
         
         return len(bottom_indices) * 4
     else:
         # 普通模式：生成实心端盖
+        vn_down = normal_indices['bottom_cap']
+        vn_up = normal_indices['top_cap']
+        
         # 底部端盖
         center_bottom_local = np.array([
             -params.offset_x * scale_x, 
@@ -1379,10 +1447,10 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             next_i = (i + 1) % segments
             b_i = bottom_indices[i]
             b_next = bottom_indices[next_i]
-            # 使用端盖法线 (索引3) - 统一朝下
+            # 使用端盖法线 - 统一朝下
             mesh.add_face(v_center_bottom, b_i[0], b_next[0],
                          vt_center_bottom, b_i[1], b_next[1],
-                         vn_down_idx, b_i[3], b_next[3])
+                         vn_down, vn_down, vn_down)
         
         # 顶部端盖
         cut_depth = 2 * params.offset_y * vertical_shear * scale_y
@@ -1399,10 +1467,10 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             next_i = (i + 1) % segments
             t_i = top_indices[i]
             t_next = top_indices[next_i]
-            # 使用端盖法线 (索引3) - 统一朝上
+            # 使用端盖法线 - 统一朝上
             mesh.add_face(v_center_top, t_next[0], t_i[0],
                          vt_center_top, t_next[1], t_i[1],
-                         vn_up_idx, t_next[3], t_i[3])
+                         vn_up, vn_up, vn_up)
         
         return len(bottom_indices) + len(top_indices) + 2
 

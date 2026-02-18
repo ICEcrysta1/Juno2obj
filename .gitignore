@@ -12,4 +12,5 @@ deps/
 *.whl
 
 # Project private docs
-AGENTS.md
+*.md
+!README.md
