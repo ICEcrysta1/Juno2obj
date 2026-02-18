@@ -704,6 +704,16 @@ class MeshGenerator:
                     
                     raw_mesh.faces.append((v_center, b_i[0], b_next[0],
                                           vt_center, b_i[1], b_next[1], raw_mesh.material_name, part.part_id))
+        
+        # 记录ring信息供法线计算使用
+        raw_mesh.ring_info = {
+            'ring_indices': [[idx for idx, _ in ring] for ring in ring_indices],
+            'inner_ring_indices': [[idx for idx, _ in ring] for ring in inner_ring_indices] if is_hollow else None,
+            'is_nose_cone': True,
+            'is_hollow': is_hollow,
+            'segments': self.segments,
+            'subdivisions': subdivisions,
+        }
     
     def _apply_clamp(self, coords: List[Tuple[float, float, float]], 
                      clamp_vals: Tuple[float, ...]) -> List[Tuple[float, float, float]]:

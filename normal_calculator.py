@@ -118,6 +118,10 @@ class NormalCalculator:
                                         ring_info: Dict[str, Any],
                                         normals: List[Tuple[float, float, float]]) -> List[tuple]:
         """基于ring_info计算法线"""
+        # 检测是否是鼻锥（多环结构）
+        if ring_info.get('is_nose_cone'):
+            return self._compute_nose_cone_normals(vertices, raw_faces, ring_info, normals)
+        
         segments = ring_info.get('segments', 24)
         bottom_indices = ring_info.get('bottom_indices', [])
         top_indices = ring_info.get('top_indices', [])
@@ -318,6 +322,100 @@ class NormalCalculator:
             radial_z_t /= norm_t
         
         return (radial_x_b, ny_bottom, radial_z_b), (radial_x_t, ny_top, radial_z_t)
+    
+    def _compute_nose_cone_normals(self, vertices: List[Tuple[float, float, float]],
+                                   raw_faces: List[tuple],
+                                   ring_info: Dict[str, Any],
+                                   normals: List[Tuple[float, float, float]]) -> List[tuple]:
+        """计算鼻锥（多环结构）的法线"""
+        segments = ring_info.get('segments', 24)
+        ring_indices = ring_info.get('ring_indices', [])
+        inner_ring_indices = ring_info.get('inner_ring_indices')
+        is_hollow = ring_info.get('is_hollow', False)
+        
+        if not ring_indices or len(ring_indices) < 2:
+            # 退化为简单面法线
+            return self._compute_simple_face_normals(vertices, raw_faces, normals)
+        
+        num_rings = len(ring_indices)
+        
+        # 计算每个顶点的法线（通过平均相邻面法线）
+        vertex_normals = {}  # 顶点索引 -> 法线列表（用于平均）
+        
+        # 收集每个面的法线，并关联到顶点
+        for raw_face in raw_faces:
+            v1, v2, v3, vt1, vt2, vt3, mat_name, part_id = raw_face
+            
+            # 计算面法线
+            if v1 >= len(vertices) or v2 >= len(vertices) or v3 >= len(vertices):
+                face_normal = (0.0, 1.0, 0.0)
+            else:
+                p1 = vertices[v1]
+                p2 = vertices[v2]
+                p3 = vertices[v3]
+                
+                edge1 = (p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2])
+                edge2 = (p3[0] - p1[0], p3[1] - p1[1], p3[2] - p1[2])
+                
+                nx = edge1[1] * edge2[2] - edge1[2] * edge2[1]
+                ny = edge1[2] * edge2[0] - edge1[0] * edge2[2]
+                nz = edge1[0] * edge2[1] - edge1[1] * edge2[0]
+                
+                length = math.sqrt(nx**2 + ny**2 + nz**2)
+                if length > 1e-6:
+                    face_normal = (nx / length, ny / length, nz / length)
+                else:
+                    face_normal = (0.0, 1.0, 0.0)
+            
+            # 将面法线添加到三个顶点
+            for v_idx in [v1, v2, v3]:
+                if v_idx not in vertex_normals:
+                    vertex_normals[v_idx] = []
+                vertex_normals[v_idx].append(face_normal)
+        
+        # 为每个顶点计算平均法线
+        vertex_normal_map = {}  # 顶点索引 -> 法线索引
+        
+        for v_idx, normal_list in vertex_normals.items():
+            if not normal_list:
+                continue
+            
+            # 平均法线
+            avg_nx = sum(n[0] for n in normal_list) / len(normal_list)
+            avg_ny = sum(n[1] for n in normal_list) / len(normal_list)
+            avg_nz = sum(n[2] for n in normal_list) / len(normal_list)
+            
+            # 归一化
+            length = math.sqrt(avg_nx**2 + avg_ny**2 + avg_nz**2)
+            if length > 1e-6:
+                avg_normal = (avg_nx / length, avg_ny / length, avg_nz / length)
+            else:
+                avg_normal = (0.0, 1.0, 0.0)
+            
+            vn_idx = len(normals)
+            normals.append(avg_normal)
+            vertex_normal_map[v_idx] = vn_idx
+        
+        # 生成带法线的面
+        faces = []
+        for raw_face in raw_faces:
+            v1, v2, v3, vt1, vt2, vt3, mat_name, part_id = raw_face
+            
+            vn1 = vertex_normal_map.get(v1, -1)
+            vn2 = vertex_normal_map.get(v2, -1)
+            vn3 = vertex_normal_map.get(v3, -1)
+            
+            # 如果找不到法线，计算面法线
+            if vn1 < 0:
+                vn1 = self._compute_face_normal(vertices, v1, v2, v3, normals)
+            if vn2 < 0:
+                vn2 = vn1
+            if vn3 < 0:
+                vn3 = vn1
+            
+            faces.append((v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat_name, part_id))
+        
+        return faces
     
     def _compute_cap_normals(self, coords: List[Tuple[float, float, float]], 
                             corner_radii: Tuple[float, ...], 
