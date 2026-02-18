@@ -127,16 +127,6 @@ class NormalCalculator:
         if ring_info.get('is_nose_cone'):
             return self._compute_nose_cone_normals(vertices, raw_faces, ring_info, normals)
         
-        # 检测是否需要使用自动角度拆边法线
-        # 策略：检查 corner_radiuses 或者采样面角度变化
-        corner_radiuses = ring_info.get('corner_radiuses', [])
-        avg_corner_radius = sum(corner_radiuses) / len(corner_radiuses) if corner_radiuses else 0.5
-        
-        # 当圆滑度很低（< 0.1）时，使用基于角度的自动拆边
-        if avg_corner_radius < 0.1:
-            print(f"[NormalCalc]   检测到圆滑度={avg_corner_radius:.2f} < 0.1，使用自动角度拆边法线")
-            return self._compute_auto_split_normals(vertices, raw_faces, normals, angle_threshold=30.0)
-        
         segments = ring_info.get('segments', 24)
         bottom_indices = ring_info.get('bottom_indices', [])
         top_indices = ring_info.get('top_indices', [])
@@ -146,28 +136,64 @@ class NormalCalculator:
         top_corners = ring_info.get('top_corners', (1.0, 1.0, 1.0, 1.0))
         is_inlet = ring_info.get('is_inlet', False)
         
-        # 预计算所有侧面法线
-        side_normal_map = {}  # 顶点索引 -> 法线索引
+        # 分类面（识别侧面和端盖）
+        bottom_set = set(bottom_indices)
+        top_set = set(top_indices)
+        bottom_inner_set = set(bottom_inner_indices) if bottom_inner_indices else set()
+        top_inner_set = set(top_inner_indices) if top_inner_indices else set()
         
-        if bottom_indices and top_indices and len(bottom_indices) == len(top_indices) == segments:
-            bottom_coords = [vertices[idx] for idx in bottom_indices]
-            top_coords = [vertices[idx] for idx in top_indices]
+        outer_side_faces = set()
+        outer_cap_bottom_faces = set()
+        outer_cap_top_faces = set()
+        inner_side_faces = set()
+        inner_cap_bottom_faces = set()
+        inner_cap_top_faces = set()
+        
+        # 自动分类所有面
+        for face_idx, raw_face in enumerate(raw_faces):
+            v1, v2, v3 = raw_face[0], raw_face[1], raw_face[2]
+            verts = {v1, v2, v3}
             
-            for i in range(segments):
-                vb = bottom_coords[i]
-                vt = top_coords[i]
-                
-                # 计算法线
-                normal_b, normal_t = self._compute_side_normals(vb, vt, bottom_coords, top_coords, i, segments)
-                
-                # 存储法线
-                vn_b = len(normals)
-                normals.append(normal_b)
-                vn_t = len(normals)
-                normals.append(normal_t)
-                
-                side_normal_map[bottom_indices[i]] = vn_b
-                side_normal_map[top_indices[i]] = vn_t
+            if is_inlet and bottom_inner_indices and top_inner_indices:
+                # 空心零件分类
+                if verts.issubset(bottom_set.union(bottom_inner_set)):
+                    has_outer = len(verts.intersection(bottom_set)) > 0
+                    has_inner = len(verts.intersection(bottom_inner_set)) > 0
+                    if has_outer:
+                        outer_cap_bottom_faces.add(face_idx)
+                    else:
+                        inner_cap_bottom_faces.add(face_idx)
+                elif verts.issubset(top_set.union(top_inner_set)):
+                    has_outer = len(verts.intersection(top_set)) > 0
+                    has_inner = len(verts.intersection(top_inner_set)) > 0
+                    if has_outer:
+                        outer_cap_top_faces.add(face_idx)
+                    else:
+                        inner_cap_top_faces.add(face_idx)
+                elif verts.issubset(bottom_set.union(top_set)):
+                    outer_side_faces.add(face_idx)
+                elif verts.issubset(bottom_inner_set.union(top_inner_set)):
+                    inner_side_faces.add(face_idx)
+            else:
+                # 实心零件分类
+                if verts.issubset(bottom_set) and len(verts.intersection(bottom_set)) >= 2:
+                    outer_cap_bottom_faces.add(face_idx)
+                elif verts.issubset(top_set) and len(verts.intersection(top_set)) >= 2:
+                    outer_cap_top_faces.add(face_idx)
+                elif verts.issubset(bottom_set.union(top_set)):
+                    outer_side_faces.add(face_idx)
+        
+        # 使用基于角度的方法计算外侧面法线（支持混合形状：上方下圆等）
+        side_normal_map = self._compute_side_normals_with_angle_split(
+            vertices, raw_faces, outer_side_faces, normals, angle_threshold=40.0
+        )
+        
+        # 内层侧面法线（空心零件）
+        inner_side_normal_map = {}
+        if is_inlet and inner_side_faces:
+            inner_side_normal_map = self._compute_side_normals_with_angle_split(
+                vertices, raw_faces, inner_side_faces, normals, angle_threshold=40.0
+            )
         
         # 计算端盖法线
         cap_normal_map = {}
@@ -187,27 +213,11 @@ class NormalCalculator:
                 normals.append(cap_normals[i])
                 cap_normal_map[idx] = vn
         
-        # 内层法线
-        inner_side_normal_map = {}
+        # 内层端盖法线（空心零件）
         inner_cap_normal_map = {}
         if is_inlet and bottom_inner_indices and top_inner_indices:
             inner_bottom_coords = [vertices[idx] for idx in bottom_inner_indices]
             inner_top_coords = [vertices[idx] for idx in top_inner_indices]
-            
-            for i in range(segments):
-                vb = inner_bottom_coords[i]
-                vt = inner_top_coords[i]
-                
-                normal_b, normal_t = self._compute_side_normals(vb, vt, inner_bottom_coords, inner_top_coords, i, segments)
-                
-                # 内层法线朝内（取反）
-                vn_b = len(normals)
-                normals.append((-normal_b[0], -normal_b[1], -normal_b[2]))
-                vn_t = len(normals)
-                normals.append((-normal_t[0], -normal_t[1], -normal_t[2]))
-                
-                inner_side_normal_map[bottom_inner_indices[i]] = vn_b
-                inner_side_normal_map[top_inner_indices[i]] = vn_t
             
             # 内层端盖法线（朝内）
             inner_cap_normals = self._compute_cap_normals(inner_bottom_coords, bottom_corners, is_top=False, invert=True)
@@ -221,52 +231,6 @@ class NormalCalculator:
                 vn = len(normals)
                 normals.append(inner_cap_normals[i])
                 inner_cap_normal_map[idx] = vn
-        
-        # 分类面（用于空心零件的拆边法线）
-        bottom_set = set(bottom_indices)
-        top_set = set(top_indices)
-        bottom_inner_set = set(bottom_inner_indices) if bottom_inner_indices else set()
-        top_inner_set = set(top_inner_indices) if top_inner_indices else set()
-        
-        outer_side_faces = set()
-        outer_cap_bottom_faces = set()
-        outer_cap_top_faces = set()
-        inner_side_faces = set()
-        inner_cap_bottom_faces = set()
-        inner_cap_top_faces = set()
-        
-        if is_inlet and bottom_inner_indices and top_inner_indices:
-            # 空心零件 - 需要分类面
-            for face_idx, raw_face in enumerate(raw_faces):
-                v1, v2, v3 = raw_face[0], raw_face[1], raw_face[2]
-                verts = {v1, v2, v3}
-                
-                # 检查是否是底面端盖（连接外层和内层底面）
-                if verts.issubset(bottom_set.union(bottom_inner_set)):
-                    has_outer = len(verts.intersection(bottom_set)) > 0
-                    has_inner = len(verts.intersection(bottom_inner_set)) > 0
-                    if has_outer and has_inner:
-                        outer_cap_bottom_faces.add(face_idx)
-                    elif has_outer:
-                        outer_cap_bottom_faces.add(face_idx)
-                    else:
-                        inner_cap_bottom_faces.add(face_idx)
-                # 检查是否是顶面端盖
-                elif verts.issubset(top_set.union(top_inner_set)):
-                    has_outer = len(verts.intersection(top_set)) > 0
-                    has_inner = len(verts.intersection(top_inner_set)) > 0
-                    if has_outer and has_inner:
-                        outer_cap_top_faces.add(face_idx)
-                    elif has_outer:
-                        outer_cap_top_faces.add(face_idx)
-                    else:
-                        inner_cap_top_faces.add(face_idx)
-                # 检查是否是外侧面
-                elif verts.issubset(bottom_set.union(top_set)):
-                    outer_side_faces.add(face_idx)
-                # 检查是否是内侧面
-                elif verts.issubset(bottom_inner_set.union(top_inner_set)):
-                    inner_side_faces.add(face_idx)
         
         # 为底面端盖面计算正确的法线（垂直于Y轴，局部空间）
         outer_cap_bottom_normal_map = {}  # 外层底面端盖法线
@@ -344,20 +308,21 @@ class NormalCalculator:
                     vn2 = inner_cap_normal_map.get(v2, -1)
                     vn3 = inner_cap_normal_map.get(v3, -1)
                 elif face_idx in outer_side_faces:
-                    vn1 = side_normal_map.get(v1, -1)
-                    vn2 = side_normal_map.get(v2, -1)
-                    vn3 = side_normal_map.get(v3, -1)
+                    # 使用新的 (v_idx, face_idx) 映射
+                    vn1 = side_normal_map.get((v1, face_idx), -1)
+                    vn2 = side_normal_map.get((v2, face_idx), -1)
+                    vn3 = side_normal_map.get((v3, face_idx), -1)
                 elif face_idx in inner_side_faces:
-                    vn1 = inner_side_normal_map.get(v1, -1)
-                    vn2 = inner_side_normal_map.get(v2, -1)
-                    vn3 = inner_side_normal_map.get(v3, -1)
+                    vn1 = inner_side_normal_map.get((v1, face_idx), -1)
+                    vn2 = inner_side_normal_map.get((v2, face_idx), -1)
+                    vn3 = inner_side_normal_map.get((v3, face_idx), -1)
                 else:
                     vn1 = vn2 = vn3 = -1
             else:
-                # 实心零件 - 使用原来的逻辑
-                vn1 = self._get_normal_for_vertex(v1, side_normal_map, cap_normal_map, inner_side_normal_map, inner_cap_normal_map)
-                vn2 = self._get_normal_for_vertex(v2, side_normal_map, cap_normal_map, inner_side_normal_map, inner_cap_normal_map)
-                vn3 = self._get_normal_for_vertex(v3, side_normal_map, cap_normal_map, inner_side_normal_map, inner_cap_normal_map)
+                # 实心零件 - 使用新的 (v_idx, face_idx) 映射
+                vn1 = side_normal_map.get((v1, face_idx), -1)
+                vn2 = side_normal_map.get((v2, face_idx), -1)
+                vn3 = side_normal_map.get((v3, face_idx), -1)
             
             # 如果找不到预计算的法线，计算面法线
             if vn1 < 0:
@@ -372,22 +337,6 @@ class NormalCalculator:
             faces.append((v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat_name, part_id))
         
         return faces
-    
-    def _get_normal_for_vertex(self, v_idx: int,
-                                side_normal_map: Dict[int, int],
-                                cap_normal_map: Dict[int, int],
-                                inner_side_normal_map: Dict[int, int],
-                                inner_cap_normal_map: Dict[int, int]) -> int:
-        """获取顶点对应的法线索引"""
-        if v_idx in side_normal_map:
-            return side_normal_map[v_idx]
-        if v_idx in cap_normal_map:
-            return cap_normal_map[v_idx]
-        if v_idx in inner_side_normal_map:
-            return inner_side_normal_map[v_idx]
-        if v_idx in inner_cap_normal_map:
-            return inner_cap_normal_map[v_idx]
-        return -1
     
     def _compute_side_normals(self, vb: Tuple[float, float, float], 
                               vt: Tuple[float, float, float],
@@ -987,7 +936,7 @@ class NormalCalculator:
     def _compute_auto_split_normals(self, vertices: List[Tuple[float, float, float]],
                                     raw_faces: List[tuple],
                                     normals: List[Tuple[float, float, float]],
-                                    angle_threshold: float = 30.0) -> List[tuple]:
+                                    angle_threshold: float = 40.0) -> List[tuple]:
         """
         基于相邻面角度自动计算拆边法线（类似Blender的标记锐边）
         
@@ -1004,7 +953,7 @@ class NormalCalculator:
             vertices: 顶点列表
             raw_faces: 原始面数据 (v1,v2,v3,vt1,vt2,vt3,mat_name,part_id)
             normals: 全局法线列表（会被修改）
-            angle_threshold: 角度阈值（度），默认30度
+            angle_threshold: 角度阈值（度），默认40度
         
         返回:
             带法线索引的面列表
@@ -1143,6 +1092,173 @@ class NormalCalculator:
             faces.append((v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat_name, part_id))
         
         return faces
+    
+    def _compute_side_normals_with_angle_split(self, vertices: List[Tuple[float, float, float]],
+                                               raw_faces: List[tuple],
+                                               side_face_indices: set,
+                                               normals: List[Tuple[float, float, float]],
+                                               angle_threshold: float = 40.0) -> Dict[int, int]:
+        """
+        基于角度检测计算侧面法线（支持混合形状：上方下圆等）
+        
+        原理：
+        1. 只处理侧面面（side_face_indices）
+        2. 检测侧面面之间的锐边（相邻面夹角 > threshold）
+        3. 在锐边处拆分法线，非锐边处保持平滑
+        4. 返回顶点索引 -> 法线索引的映射
+        
+        参数:
+            vertices: 顶点列表
+            raw_faces: 所有原始面数据
+            side_face_indices: 侧面面的索引集合
+            normals: 全局法线列表（会被修改）
+            angle_threshold: 角度阈值（度），默认40度
+        
+        返回:
+            顶点索引 -> 法线索引的映射字典
+        """
+        from collections import defaultdict
+        
+        if not side_face_indices:
+            return {}
+        
+        threshold_rad = math.radians(angle_threshold)
+        side_faces_list = list(side_face_indices)
+        
+        # === 1. 计算所有侧面面的法线 ===
+        side_face_normals = {}  # face_idx -> normal
+        
+        for face_idx in side_face_indices:
+            raw_face = raw_faces[face_idx]
+            v1, v2, v3 = raw_face[0], raw_face[1], raw_face[2]
+            
+            if v1 >= len(vertices) or v2 >= len(vertices) or v3 >= len(vertices):
+                side_face_normals[face_idx] = (0.0, 1.0, 0.0)
+                continue
+            
+            p1, p2, p3 = vertices[v1], vertices[v2], vertices[v3]
+            
+            edge1 = (p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2])
+            edge2 = (p3[0] - p1[0], p3[1] - p1[1], p3[2] - p1[2])
+            nx = edge1[1] * edge2[2] - edge1[2] * edge2[1]
+            ny = edge1[2] * edge2[0] - edge1[0] * edge2[2]
+            nz = edge1[0] * edge2[1] - edge1[1] * edge2[0]
+            length = math.sqrt(nx**2 + ny**2 + nz**2)
+            
+            if length > 1e-6:
+                side_face_normals[face_idx] = (nx/length, ny/length, nz/length)
+            else:
+                side_face_normals[face_idx] = (0.0, 1.0, 0.0)
+        
+        # === 2. 构建侧面面之间的边-面邻接表 ===
+        edge_side_faces = defaultdict(list)  # (min_v, max_v) -> [face_idx, ...]
+        
+        for face_idx in side_face_indices:
+            raw_face = raw_faces[face_idx]
+            v1, v2, v3 = raw_face[0], raw_face[1], raw_face[2]
+            edges = [(min(v1, v2), max(v1, v2)),
+                     (min(v2, v3), max(v2, v3)),
+                     (min(v3, v1), max(v3, v1))]
+            for edge in edges:
+                edge_side_faces[edge].append(face_idx)
+        
+        # === 3. 检测侧面面之间的锐边 ===
+        sharp_edges = set()
+        
+        for edge, adjacent_faces in edge_side_faces.items():
+            if len(adjacent_faces) == 2:
+                f1, f2 = adjacent_faces[0], adjacent_faces[1]
+                n1 = side_face_normals[f1]
+                n2 = side_face_normals[f2]
+                
+                # 计算夹角
+                dot = n1[0]*n2[0] + n1[1]*n2[1] + n1[2]*n2[2]
+                dot = max(-1.0, min(1.0, dot))
+                angle = math.acos(dot)
+                
+                if angle > threshold_rad:
+                    sharp_edges.add(edge)
+        
+        # === 4. 基于锐边构建侧面平滑组 ===
+        face_smooth_group = {}  # face_idx -> group_id
+        current_group = 0
+        
+        def flood_fill_group(start_face, group_id):
+            stack = [start_face]
+            face_smooth_group[start_face] = group_id
+            
+            while stack:
+                face_idx = stack.pop()
+                raw_face = raw_faces[face_idx]
+                v1, v2, v3 = raw_face[0], raw_face[1], raw_face[2]
+                edges = [(min(v1, v2), max(v1, v2)),
+                         (min(v2, v3), max(v2, v3)),
+                         (min(v3, v1), max(v3, v1))]
+                
+                for edge in edges:
+                    if edge not in sharp_edges:  # 非锐边才能穿越
+                        for adj_face in edge_side_faces[edge]:
+                            if adj_face not in face_smooth_group:
+                                face_smooth_group[adj_face] = group_id
+                                stack.append(adj_face)
+        
+        for face_idx in side_face_indices:
+            if face_idx not in face_smooth_group:
+                flood_fill_group(face_idx, current_group)
+                current_group += 1
+        
+        # === 5. 为每个(顶点, 平滑组)组合累加侧面法线 ===
+        vertex_group_acc = defaultdict(lambda: [0.0, 0.0, 0.0])
+        
+        for face_idx in side_face_indices:
+            group_id = face_smooth_group[face_idx]
+            face_normal = side_face_normals[face_idx]
+            raw_face = raw_faces[face_idx]
+            
+            for v_idx in [raw_face[0], raw_face[1], raw_face[2]]:
+                key = (v_idx, group_id)
+                vertex_group_acc[key][0] += face_normal[0]
+                vertex_group_acc[key][1] += face_normal[1]
+                vertex_group_acc[key][2] += face_normal[2]
+        
+        # === 6. 归一化并创建顶点->法线映射 ===
+        normal_index_map = {}  # (v_idx, group_id) -> normal_idx
+        vertex_normal_map = {}  # v_idx -> normal_idx (取第一个，但每个顶点可能有多个)
+        
+        for key, acc_normal in vertex_group_acc.items():
+            length = math.sqrt(acc_normal[0]**2 + acc_normal[1]**2 + acc_normal[2]**2)
+            if length > 1e-6:
+                final_normal = (acc_normal[0]/length, acc_normal[1]/length, acc_normal[2]/length)
+            else:
+                final_normal = (0.0, 1.0, 0.0)
+            
+            normal_idx = len(normals)
+            normals.append(final_normal)
+            normal_index_map[key] = normal_idx
+        
+        # === 7. 为每个面的顶点返回对应的法线索引 ===
+        # 注意：这里返回的是顶点->法线的映射，但实际上一个顶点可能有多个法线
+        # 我们需要根据面来查找正确的法线
+        vertex_to_normal = {}  # v_idx -> {group_id: normal_idx}
+        for (v_idx, group_id), normal_idx in normal_index_map.items():
+            if v_idx not in vertex_to_normal:
+                vertex_to_normal[v_idx] = {}
+            vertex_to_normal[v_idx][group_id] = normal_idx
+        
+        # 创建最终的顶点->法线映射（用于面的构建）
+        # 对于每个面，我们需要找到它所属的平滑组，然后获取对应法线
+        side_normal_map = {}  # (v_idx, face_idx) -> normal_idx
+        
+        for face_idx in side_face_indices:
+            group_id = face_smooth_group[face_idx]
+            raw_face = raw_faces[face_idx]
+            
+            for v_idx in [raw_face[0], raw_face[1], raw_face[2]]:
+                key = (v_idx, group_id)
+                if key in normal_index_map:
+                    side_normal_map[(v_idx, face_idx)] = normal_index_map[key]
+        
+        return side_normal_map
     
     def save_cache(self, cache_dir: str) -> List[str]:
         """保存带法线的网格到缓存文件"""
