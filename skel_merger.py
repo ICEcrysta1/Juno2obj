@@ -378,11 +378,6 @@ class SkeletonMerger(MeshMerger):
 
         joint_index = self.joints_order.index(joint_path)
 
-        # 调试输出
-        mesh_name = str(usd_mesh.GetPath().name)
-        if '38' in joint_id or '272' in mesh_name or '337' in mesh_name or '208' in mesh_name:
-            print(f"[DEBUG] 绑定 {mesh_name} -> {joint_id} (路径: {joint_path}, 索引: {joint_index})")
-
         # 创建 SkelBindingAPI
         binding = UsdSkel.BindingAPI.Apply(usd_mesh.GetPrim())
         binding.CreateSkeletonRel().SetTargets([skeleton_path])

@@ -231,6 +231,15 @@ class SkeletonBuilder:
 
             current = self.child_to_parent.get(current_str)
 
+        # 如果退出循环是因为遇到循环（current in visited），
+        # 检查已访问路径中是否有关节（这可能发生在XML连接有循环时）
+        if current in visited and result is None:
+            for node in visited:
+                node_str = str(node)
+                if node_str in self.joint_parts:
+                    result = self.joints[node_str].joint_id
+                    break
+
         # 只缓存结果，不缓存路径
         self._nearest_joint_cache[part_id] = result
         return result
