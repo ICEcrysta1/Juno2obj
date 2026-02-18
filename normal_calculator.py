@@ -261,21 +261,21 @@ class NormalCalculator:
         
         if is_inlet and bottom_inner_indices and top_inner_indices:
             # 根据零件类型决定端盖法线方向
-            # FairingBase1 是倒置的（底面朝上），Fairing1 是正置的
+            # FairingBase1 和 Inlet1 是一类，Fairing1 是另一类
             part_type = ring_info.get('part_type', '')
             
-            if part_type == 'FairingBase1':
-                # FairingBase1：倒置，底面朝上，顶面朝下
-                outer_bottom_normal = (0.0, -1.0, 0.0)   # 外层底面朝上
-                inner_bottom_normal = (0.0, -1.0, 0.0)  # 内层底面朝下
-                outer_top_normal = (0.0, 1.0, 0.0)     # 外层顶面朝下
-                inner_top_normal = (0.0, 1.0, 0.0)      # 内层顶面朝上
+            if part_type in ('FairingBase1', 'Inlet1'):
+                # FairingBase1, Inlet1
+                outer_bottom_normal = (0.0, -1.0, 0.0)
+                inner_bottom_normal = (0.0, -1.0, 0.0)
+                outer_top_normal = (0.0, 1.0, 0.0)
+                inner_top_normal = (0.0, 1.0, 0.0)
             else:
-                # Fairing1, Inlet1 等：正置，底面朝下，顶面朝上
-                outer_bottom_normal = (0.0, 1.0, 0.0)  # 外层底面朝下
-                inner_bottom_normal = (0.0, 1.0, 0.0)   # 内层底面朝上
-                outer_top_normal = (0.0, -1.0, 0.0)      # 外层顶面朝上
-                inner_top_normal = (0.0, -1.0, 0.0)     # 内层顶面朝下
+                # Fairing1 等
+                outer_bottom_normal = (0.0, 1.0, 0.0)
+                inner_bottom_normal = (0.0, 1.0, 0.0)
+                outer_top_normal = (0.0, -1.0, 0.0)
+                inner_top_normal = (0.0, -1.0, 0.0)
             
             # 外层底面端盖法线
             for idx in bottom_indices:
