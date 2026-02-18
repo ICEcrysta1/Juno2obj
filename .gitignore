@@ -1,16 +1,20 @@
 *.usda
 *.usdc
 *.png
+*.md
+!README.md
 
 Output/*
 Input/*
 __pycache__/*
 !Input/Test-Juno2OBJ.xml
+cache_gen/*
+cache_normals/*
+.sr2_cache
 
 # Dependencies
 deps/
 *.whl
 
 # Project private docs
-*.md
-!README.md
+
