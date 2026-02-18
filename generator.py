@@ -713,6 +713,7 @@ class MeshGenerator:
             'is_hollow': is_hollow,
             'segments': self.segments,
             'subdivisions': subdivisions,
+            'has_bottom_cap': params.bottom_scale_x > 1e-6 or params.bottom_scale_z > 1e-6,
         }
     
     def _apply_clamp(self, coords: List[Tuple[float, float, float]], 

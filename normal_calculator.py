@@ -417,6 +417,291 @@ class NormalCalculator:
         
         return faces
     
+    def _compute_nose_cone_normals(self, vertices: List[Tuple[float, float, float]],
+                                   raw_faces: List[tuple],
+                                   ring_info: Dict[str, Any],
+                                   normals: List[Tuple[float, float, float]]) -> List[tuple]:
+        """计算鼻锥（多环结构）的法线，带拆边硬边"""
+        segments = ring_info.get('segments', 24)
+        ring_indices = ring_info.get('ring_indices', [])
+        inner_ring_indices = ring_info.get('inner_ring_indices')
+        is_hollow = ring_info.get('is_hollow', False)
+        has_bottom_cap = ring_info.get('has_bottom_cap', True)
+        
+        if not ring_indices or len(ring_indices) < 2:
+            return self._compute_simple_face_normals(vertices, raw_faces, normals)
+        
+        num_rings = len(ring_indices)
+        bottom_ring = set(ring_indices[0])  # 底面环
+        top_ring = set(ring_indices[-1])    # 顶面环（通常是尖端）
+        
+        inner_bottom_ring = set(inner_ring_indices[0]) if inner_ring_indices and is_hollow else set()
+        inner_top_ring = set(inner_ring_indices[-1]) if inner_ring_indices and is_hollow else set()
+        
+        # 计算所有环的顶点索引范围
+        all_ring_vertices = set()
+        for ring in ring_indices:
+            all_ring_vertices.update(ring)
+        if inner_ring_indices:
+            for ring in inner_ring_indices:
+                all_ring_vertices.update(ring)
+        
+        # 找到中心顶点（实心鼻锥的底面中心）
+        # 中心顶点不在任何环中，且通常在所有环顶点之后
+        max_ring_vertex = max(all_ring_vertices) if all_ring_vertices else -1
+        center_vertex = None
+        for face_idx, raw_face in enumerate(raw_faces):
+            v1, v2, v3 = raw_face[0], raw_face[1], raw_face[2]
+            for v in [v1, v2, v3]:
+                if v > max_ring_vertex:
+                    center_vertex = v
+                    break
+            if center_vertex is not None:
+                break
+        
+        # 构建所有环的顶点集合（用于检测）
+        all_outer_rings = [set(ring) for ring in ring_indices]
+        all_inner_rings = [set(ring) for ring in inner_ring_indices] if inner_ring_indices and is_hollow else []
+        
+        # 分类面
+        side_face_indices = set()      # 外侧面
+        cap_bottom_face_indices = set()  # 底面端盖
+        inner_side_face_indices = set()  # 内侧面
+        inner_cap_bottom_face_indices = set()  # 内层底面端盖
+        
+        for face_idx, raw_face in enumerate(raw_faces):
+            v1, v2, v3, vt1, vt2, vt3, mat_name, part_id = raw_face
+            verts = {v1, v2, v3}
+            
+            if is_hollow and inner_ring_indices:
+                # 空心鼻锥
+                # 检查是否是底面端盖（连接外层底面环和内层底面环）
+                if verts.issubset(bottom_ring.union(inner_bottom_ring)):
+                    has_outer = len(verts.intersection(bottom_ring)) > 0
+                    has_inner = len(verts.intersection(inner_bottom_ring)) > 0
+                    if has_outer and has_inner:
+                        cap_bottom_face_indices.add(face_idx)
+                    else:
+                        side_face_indices.add(face_idx)
+                # 检查是否是外侧面（跨越多个外层环）
+                elif any(len(verts.intersection(ring)) > 0 for ring in all_outer_rings):
+                    side_face_indices.add(face_idx)
+                # 检查是否是内侧面（跨越多个内层环）
+                elif any(len(verts.intersection(ring)) > 0 for ring in all_inner_rings):
+                    inner_side_face_indices.add(face_idx)
+            else:
+                # 实心鼻锥 - 底面端盖包含中心顶点
+                if center_vertex is not None and center_vertex in verts:
+                    # 包含中心顶点的是底面端盖
+                    cap_bottom_face_indices.add(face_idx)
+                elif verts.issubset(bottom_ring):
+                    # 纯底面环顶点（可能是端盖面的一部分）
+                    cap_bottom_face_indices.add(face_idx)
+                else:
+                    # 外侧面（跨越多个环）
+                    side_face_indices.add(face_idx)
+        
+        # 计算侧面法线（平滑）- 每个顶点的侧面法线
+        side_normal_map = {}  # 顶点索引 -> 侧面法线索引
+        vertex_side_faces = {}  # 顶点索引 -> 相邻侧面面列表
+        
+        for face_idx in side_face_indices:
+            v1, v2, v3 = raw_faces[face_idx][0], raw_faces[face_idx][1], raw_faces[face_idx][2]
+            # 计算面法线
+            if v1 < len(vertices) and v2 < len(vertices) and v3 < len(vertices):
+                p1, p2, p3 = vertices[v1], vertices[v2], vertices[v3]
+                edge1 = (p2[0]-p1[0], p2[1]-p1[1], p2[2]-p1[2])
+                edge2 = (p3[0]-p1[0], p3[1]-p1[1], p3[2]-p1[2])
+                nx = edge1[1]*edge2[2] - edge1[2]*edge2[1]
+                ny = edge1[2]*edge2[0] - edge1[0]*edge2[2]
+                nz = edge1[0]*edge2[1] - edge1[1]*edge2[0]
+                length = math.sqrt(nx**2 + ny**2 + nz**2)
+                if length > 1e-6:
+                    face_normal = (nx/length, ny/length, nz/length)
+                else:
+                    face_normal = (0.0, 1.0, 0.0)
+            else:
+                face_normal = (0.0, 1.0, 0.0)
+            
+            for v in [v1, v2, v3]:
+                if v not in vertex_side_faces:
+                    vertex_side_faces[v] = []
+                vertex_side_faces[v].append(face_normal)
+        
+        # 平均侧面法线
+        for v_idx, face_normals in vertex_side_faces.items():
+            avg_nx = sum(n[0] for n in face_normals) / len(face_normals)
+            avg_ny = sum(n[1] for n in face_normals) / len(face_normals)
+            avg_nz = sum(n[2] for n in face_normals) / len(face_normals)
+            length = math.sqrt(avg_nx**2 + avg_ny**2 + avg_nz**2)
+            if length > 1e-6:
+                avg_normal = (avg_nx/length, avg_ny/length, avg_nz/length)
+            else:
+                avg_normal = (0.0, 1.0, 0.0)
+            vn_idx = len(normals)
+            normals.append(avg_normal)
+            side_normal_map[v_idx] = vn_idx
+        
+        # 计算底面端盖法线（硬边）- 每个顶点的端盖法线
+        cap_normal_map = {}  # 顶点索引 -> 端盖法线索引
+        vertex_cap_faces = {}  # 顶点索引 -> 相邻端盖面列表
+        
+        for face_idx in cap_bottom_face_indices:
+            v1, v2, v3 = raw_faces[face_idx][0], raw_faces[face_idx][1], raw_faces[face_idx][2]
+            # 计算面法线
+            if v1 < len(vertices) and v2 < len(vertices) and v3 < len(vertices):
+                p1, p2, p3 = vertices[v1], vertices[v2], vertices[v3]
+                edge1 = (p2[0]-p1[0], p2[1]-p1[1], p2[2]-p1[2])
+                edge2 = (p3[0]-p1[0], p3[1]-p1[1], p3[2]-p1[2])
+                nx = edge1[1]*edge2[2] - edge1[2]*edge2[1]
+                ny = edge1[2]*edge2[0] - edge1[0]*edge2[2]
+                nz = edge1[0]*edge2[1] - edge1[1]*edge2[0]
+                length = math.sqrt(nx**2 + ny**2 + nz**2)
+                if length > 1e-6:
+                    face_normal = (nx/length, ny/length, nz/length)
+                else:
+                    face_normal = (0.0, -1.0, 0.0)  # 底面朝下
+            else:
+                face_normal = (0.0, -1.0, 0.0)
+            
+            for v in [v1, v2, v3]:
+                if v not in vertex_cap_faces:
+                    vertex_cap_faces[v] = []
+                vertex_cap_faces[v].append(face_normal)
+        
+        # 平均端盖法线
+        for v_idx, face_normals in vertex_cap_faces.items():
+            avg_nx = sum(n[0] for n in face_normals) / len(face_normals)
+            avg_ny = sum(n[1] for n in face_normals) / len(face_normals)
+            avg_nz = sum(n[2] for n in face_normals) / len(face_normals)
+            length = math.sqrt(avg_nx**2 + avg_ny**2 + avg_nz**2)
+            if length > 1e-6:
+                avg_normal = (avg_nx/length, avg_ny/length, avg_nz/length)
+            else:
+                avg_normal = (0.0, -1.0, 0.0)
+            vn_idx = len(normals)
+            normals.append(avg_normal)
+            cap_normal_map[v_idx] = vn_idx
+        
+        # 内层法线（类似逻辑）
+        inner_side_normal_map = {}
+        inner_cap_normal_map = {}
+        
+        if is_hollow and inner_ring_indices:
+            # 内侧面
+            inner_vertex_side_faces = {}
+            for face_idx in inner_side_face_indices:
+                v1, v2, v3 = raw_faces[face_idx][0], raw_faces[face_idx][1], raw_faces[face_idx][2]
+                if v1 < len(vertices) and v2 < len(vertices) and v3 < len(vertices):
+                    p1, p2, p3 = vertices[v1], vertices[v2], vertices[v3]
+                    edge1 = (p2[0]-p1[0], p2[1]-p1[1], p2[2]-p1[2])
+                    edge2 = (p3[0]-p1[0], p3[1]-p1[1], p3[2]-p1[2])
+                    nx = edge1[1]*edge2[2] - edge1[2]*edge2[1]
+                    ny = edge1[2]*edge2[0] - edge1[0]*edge2[2]
+                    nz = edge1[0]*edge2[1] - edge1[1]*edge2[0]
+                    length = math.sqrt(nx**2 + ny**2 + nz**2)
+                    if length > 1e-6:
+                        face_normal = (-nx/length, -ny/length, -nz/length)  # 内层反向
+                    else:
+                        face_normal = (0.0, -1.0, 0.0)
+                else:
+                    face_normal = (0.0, -1.0, 0.0)
+                
+                for v in [v1, v2, v3]:
+                    if v not in inner_vertex_side_faces:
+                        inner_vertex_side_faces[v] = []
+                    inner_vertex_side_faces[v].append(face_normal)
+            
+            for v_idx, face_normals in inner_vertex_side_faces.items():
+                avg_nx = sum(n[0] for n in face_normals) / len(face_normals)
+                avg_ny = sum(n[1] for n in face_normals) / len(face_normals)
+                avg_nz = sum(n[2] for n in face_normals) / len(face_normals)
+                length = math.sqrt(avg_nx**2 + avg_ny**2 + avg_nz**2)
+                if length > 1e-6:
+                    avg_normal = (avg_nx/length, avg_ny/length, avg_nz/length)
+                else:
+                    avg_normal = (0.0, -1.0, 0.0)
+                vn_idx = len(normals)
+                normals.append(avg_normal)
+                inner_side_normal_map[v_idx] = vn_idx
+            
+            # 内层端盖
+            inner_vertex_cap_faces = {}
+            for face_idx in inner_cap_bottom_face_indices:
+                v1, v2, v3 = raw_faces[face_idx][0], raw_faces[face_idx][1], raw_faces[face_idx][2]
+                if v1 < len(vertices) and v2 < len(vertices) and v3 < len(vertices):
+                    p1, p2, p3 = vertices[v1], vertices[v2], vertices[v3]
+                    edge1 = (p2[0]-p1[0], p2[1]-p1[1], p2[2]-p1[2])
+                    edge2 = (p3[0]-p1[0], p3[1]-p1[1], p3[2]-p1[2])
+                    nx = edge1[1]*edge2[2] - edge1[2]*edge2[1]
+                    ny = edge1[2]*edge2[0] - edge1[0]*edge2[2]
+                    nz = edge1[0]*edge2[1] - edge1[1]*edge2[0]
+                    length = math.sqrt(nx**2 + ny**2 + nz**2)
+                    if length > 1e-6:
+                        face_normal = (nx/length, ny/length, nz/length)
+                    else:
+                        face_normal = (0.0, 1.0, 0.0)
+                else:
+                    face_normal = (0.0, 1.0, 0.0)
+                
+                for v in [v1, v2, v3]:
+                    if v not in inner_vertex_cap_faces:
+                        inner_vertex_cap_faces[v] = []
+                    inner_vertex_cap_faces[v].append(face_normal)
+            
+            for v_idx, face_normals in inner_vertex_cap_faces.items():
+                avg_nx = sum(n[0] for n in face_normals) / len(face_normals)
+                avg_ny = sum(n[1] for n in face_normals) / len(face_normals)
+                avg_nz = sum(n[2] for n in face_normals) / len(face_normals)
+                length = math.sqrt(avg_nx**2 + avg_ny**2 + avg_nz**2)
+                if length > 1e-6:
+                    avg_normal = (avg_nx/length, avg_ny/length, avg_nz/length)
+                else:
+                    avg_normal = (0.0, 1.0, 0.0)
+                vn_idx = len(normals)
+                normals.append(avg_normal)
+                inner_cap_normal_map[v_idx] = vn_idx
+        
+        # 生成带法线的面 - 关键：侧面使用侧面法线，端盖使用端盖法线（硬边）
+        faces = []
+        for face_idx, raw_face in enumerate(raw_faces):
+            v1, v2, v3, vt1, vt2, vt3, mat_name, part_id = raw_face
+            
+            if face_idx in cap_bottom_face_indices:
+                # 底面端盖 - 使用端盖法线（硬边）
+                vn1 = cap_normal_map.get(v1, -1)
+                vn2 = cap_normal_map.get(v2, -1)
+                vn3 = cap_normal_map.get(v3, -1)
+            elif face_idx in side_face_indices:
+                # 外侧面 - 使用侧面法线（平滑）
+                vn1 = side_normal_map.get(v1, -1)
+                vn2 = side_normal_map.get(v2, -1)
+                vn3 = side_normal_map.get(v3, -1)
+            elif face_idx in inner_cap_bottom_face_indices:
+                vn1 = inner_cap_normal_map.get(v1, -1)
+                vn2 = inner_cap_normal_map.get(v2, -1)
+                vn3 = inner_cap_normal_map.get(v3, -1)
+            elif face_idx in inner_side_face_indices:
+                vn1 = inner_side_normal_map.get(v1, -1)
+                vn2 = inner_side_normal_map.get(v2, -1)
+                vn3 = inner_side_normal_map.get(v3, -1)
+            else:
+                vn1 = vn2 = vn3 = -1
+            
+            # 如果找不到法线，计算面法线
+            if vn1 < 0 or vn2 < 0 or vn3 < 0:
+                vn_new = self._compute_face_normal(vertices, v1, v2, v3, normals)
+                if vn1 < 0:
+                    vn1 = vn_new
+                if vn2 < 0:
+                    vn2 = vn_new
+                if vn3 < 0:
+                    vn3 = vn_new
+            
+            faces.append((v1, v2, v3, vt1, vt2, vt3, vn1, vn2, vn3, mat_name, part_id))
+        
+        return faces
+    
     def _compute_cap_normals(self, coords: List[Tuple[float, float, float]], 
                             corner_radii: Tuple[float, ...], 
                             is_top: bool = True, 
