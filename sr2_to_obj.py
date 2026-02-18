@@ -471,7 +471,8 @@ def apply_clamp_to_ring(coords: List[Tuple[float, float, float]],
     return new_coords
 
 
-def compute_normals_after_transform(mesh, bottom_v_indices, top_v_indices, segments):
+def compute_normals_after_transform(mesh, bottom_v_indices, top_v_indices, segments,
+                                      corner_radii_bottom=None, corner_radii_top=None):
     """
     在所有变换完成后，基于最终顶点位置计算法线
     
@@ -480,97 +481,225 @@ def compute_normals_after_transform(mesh, bottom_v_indices, top_v_indices, segme
         bottom_v_indices: 底部顶点索引列表 (1-based)
         top_v_indices: 顶部顶点索引列表 (1-based)
         segments: 分段数
+        corner_radii_bottom: 底部圆角半径（用于判断硬边）
+        corner_radii_top: 顶部圆角半径（用于判断硬边）
     
     返回:
-        法线索引字典: {'bottom_side': [...], 'top_side': [...], 'bottom_cap': idx, 'top_cap': idx}
+        法线索引字典: {
+            'bottom_side': [...], 'top_side': [...],
+            'bottom_cap': [...], 'top_cap': [...]
+        }
     """
     normal_indices = {
         'bottom_side': [],
         'top_side': [],
-        'bottom_cap': None,
-        'top_cap': None
+        'bottom_cap': [],
+        'top_cap': []
     }
     
     # 获取变换后的顶点坐标
     bottom_coords = [mesh.vertices[idx - 1] for idx in bottom_v_indices]
     top_coords = [mesh.vertices[idx - 1] for idx in top_v_indices]
     
-    # 计算实际中心轴（考虑offset）
-    bottom_center = (
-        sum(c[0] for c in bottom_coords) / len(bottom_coords),
-        sum(c[1] for c in bottom_coords) / len(bottom_coords),
-        sum(c[2] for c in bottom_coords) / len(bottom_coords)
-    )
-    top_center = (
-        sum(c[0] for c in top_coords) / len(top_coords),
-        sum(c[1] for c in top_coords) / len(top_coords),
-        sum(c[2] for c in top_coords) / len(top_coords)
-    )
-    
-    # 计算侧面法线
+    # ========== 侧面法线计算 ==========
+    # 基于上下对应顶点的连线计算法线
     for i in range(segments):
         vb = bottom_coords[i]
         vt = top_coords[i]
         
-        # 计算从中心轴指向顶点的水平方向
-        dx_bottom = vb[0] - bottom_center[0]
-        dz_bottom = vb[2] - bottom_center[2]
-        dx_top = vt[0] - top_center[0]
-        dz_top = vt[2] - top_center[2]
+        # 计算连线方向（切线）
+        tangent = (vt[0] - vb[0], vt[1] - vb[1], vt[2] - vb[2])
         
-        # 归一化水平分量
+        # 计算水平径向方向（从底部中心指向底部顶点）
+        # 这是侧面法线的主要水平分量
+        dx_bottom = vb[0] - sum(c[0] for c in bottom_coords) / len(bottom_coords)
+        dz_bottom = vb[2] - sum(c[2] for c in bottom_coords) / len(bottom_coords)
         h_bottom = math.sqrt(dx_bottom**2 + dz_bottom**2)
+        
+        dx_top = vt[0] - sum(c[0] for c in top_coords) / len(top_coords)
+        dz_top = vt[2] - sum(c[2] for c in top_coords) / len(top_coords)
         h_top = math.sqrt(dx_top**2 + dz_top**2)
         
+        # 归一化水平方向
         if h_bottom > 1e-6:
-            nx_bottom = dx_bottom / h_bottom
-            nz_bottom = dz_bottom / h_bottom
+            radial_x_b = dx_bottom / h_bottom
+            radial_z_b = dz_bottom / h_bottom
         else:
             angle = i * 2 * math.pi / segments
-            nx_bottom = math.cos(angle)
-            nz_bottom = math.sin(angle)
+            radial_x_b = math.cos(angle)
+            radial_z_b = math.sin(angle)
             
         if h_top > 1e-6:
-            nx_top = dx_top / h_top
-            nz_top = dz_top / h_top
+            radial_x_t = dx_top / h_top
+            radial_z_t = dz_top / h_top
         else:
             angle = i * 2 * math.pi / segments
-            nx_top = math.cos(angle)
-            nz_top = math.sin(angle)
+            radial_x_t = math.cos(angle)
+            radial_z_t = math.sin(angle)
         
-        # 计算Y方向斜率（用于锥形侧面）
-        height = vt[1] - vb[1]
-        if abs(height) > 1e-6:
-            slope = (h_top - h_bottom) / height
-            ny_bottom = -slope * math.sqrt(nx_bottom**2 + nz_bottom**2)
-            ny_top = -slope * math.sqrt(nx_top**2 + nz_top**2)
+        # 侧面法线：垂直于切线，且在径向方向上有分量
+        # 对于圆柱/锥形，法线 = 径向方向 - (径向·切线)/|切线|^2 * 切线
+        # 简化为：径向方向水平，Y分量使得法线垂直于侧面
+        tangent_len_sq = tangent[0]**2 + tangent[1]**2 + tangent[2]**2
+        
+        if tangent_len_sq > 1e-6 and h_bottom > 1e-6:
+            # 径向与切线的点积
+            dot_b = radial_x_b * tangent[0] + radial_z_b * tangent[2]
+            # Y分量使得法线垂直于切线：radial·tangent + ny * tangent_y = 0
+            if abs(tangent[1]) > 1e-6:
+                ny_bottom = -dot_b / tangent[1] if tangent_len_sq > 1e-6 else 0
+            else:
+                ny_bottom = 0
         else:
-            ny_bottom = 0.0
-            ny_top = 0.0
+            ny_bottom = 0
+            
+        if tangent_len_sq > 1e-6 and h_top > 1e-6:
+            dot_t = radial_x_t * tangent[0] + radial_z_t * tangent[2]
+            if abs(tangent[1]) > 1e-6:
+                ny_top = -dot_t / tangent[1] if tangent_len_sq > 1e-6 else 0
+            else:
+                ny_top = 0
+        else:
+            ny_top = 0
         
-        # 归一化
-        norm_bottom = math.sqrt(nx_bottom**2 + ny_bottom**2 + nz_bottom**2)
-        norm_top = math.sqrt(nx_top**2 + ny_top**2 + nz_top**2)
+        # 归一化法线
+        norm_bottom = math.sqrt(radial_x_b**2 + ny_bottom**2 + radial_z_b**2)
+        norm_top = math.sqrt(radial_x_t**2 + ny_top**2 + radial_z_t**2)
         
         if norm_bottom > 1e-6:
-            nx_bottom /= norm_bottom
+            radial_x_b /= norm_bottom
             ny_bottom /= norm_bottom
-            nz_bottom /= norm_bottom
+            radial_z_b /= norm_bottom
         if norm_top > 1e-6:
-            nx_top /= norm_top
+            radial_x_t /= norm_top
             ny_top /= norm_top
-            nz_top /= norm_top
+            radial_z_t /= norm_top
         
-        # 添加法线
-        vn_bottom_idx = mesh.add_normal(nx_bottom, ny_bottom, nz_bottom)
-        vn_top_idx = mesh.add_normal(nx_top, ny_top, nz_top)
+        # 添加侧面法线
+        vn_bottom_idx = mesh.add_normal(radial_x_b, ny_bottom, radial_z_b)
+        vn_top_idx = mesh.add_normal(radial_x_t, ny_top, radial_z_t)
         
         normal_indices['bottom_side'].append(vn_bottom_idx)
         normal_indices['top_side'].append(vn_top_idx)
     
-    # 端盖法线
-    normal_indices['bottom_cap'] = mesh.add_normal(0, -1, 0)
-    normal_indices['top_cap'] = mesh.add_normal(0, 1, 0)
+    # ========== 端盖法线计算（硬边/圆滑边判断）==========
+    # 判断逻辑：计算顶点与相邻两个顶点的夹角
+    # 如果夹角接近180度（平滑曲线），使用指向中心的法线
+    # 如果夹角较小（硬边/角），使用垂直于边的法线
+    
+    def compute_cap_normals(coords, corner_radii, is_top=True):
+        """计算端盖法线，根据夹角判断硬边/圆滑边"""
+        n = len(coords)
+        cap_normals = []
+        
+        # 计算中心点
+        center_x = sum(c[0] for c in coords) / n
+        center_z = sum(c[2] for c in coords) / n
+        
+        # 判断圆角程度（平均圆角半径）
+        avg_corner_radius = 0.5  # 默认
+        if corner_radii:
+            avg_corner_radius = sum(corner_radii) / len(corner_radii)
+        
+        # 圆滑阈值：夹角大于此值认为是圆滑边
+        smooth_threshold = math.radians(150)  # 150度
+        if avg_corner_radius < 0.1:
+            smooth_threshold = math.radians(170)  # 接近正方形，阈值更高
+        elif avg_corner_radius > 0.9:
+            smooth_threshold = math.radians(135)  # 接近圆形，阈值更低
+        
+        for i in range(n):
+            prev_i = (i - 1) % n
+            next_i = (i + 1) % n
+            
+            v_curr = coords[i]
+            v_prev = coords[prev_i]
+            v_next = coords[next_i]
+            
+            # 计算两条边向量
+            edge_prev = (v_prev[0] - v_curr[0], v_prev[2] - v_curr[2])  # XZ平面
+            edge_next = (v_next[0] - v_curr[0], v_next[2] - v_curr[2])
+            
+            # 计算夹角
+            len_prev = math.sqrt(edge_prev[0]**2 + edge_prev[1]**2)
+            len_next = math.sqrt(edge_next[0]**2 + edge_next[1]**2)
+            
+            if len_prev > 1e-6 and len_next > 1e-6:
+                # 归一化
+                edge_prev_n = (edge_prev[0] / len_prev, edge_prev[1] / len_prev)
+                edge_next_n = (edge_next[0] / len_next, edge_next[1] / len_next)
+                
+                # 点积计算夹角
+                dot = edge_prev_n[0] * edge_next_n[0] + edge_prev_n[1] * edge_next_n[1]
+                dot = max(-1, min(1, dot))  # 限制范围
+                angle = math.acos(dot)
+            else:
+                angle = math.pi  # 默认平滑
+            
+            # 判断是圆滑边还是硬边
+            if angle >= smooth_threshold:
+                # 圆滑边：法线指向中心
+                dx = center_x - v_curr[0]
+                dz = center_z - v_curr[2]
+                len_h = math.sqrt(dx**2 + dz**2)
+                if len_h > 1e-6:
+                    nx = dx / len_h
+                    nz = dz / len_h
+                else:
+                    nx, nz = 0, 0
+            else:
+                # 硬边：法线垂直于两条边的角平分线
+                # 使用两条边向量的和作为法线方向（外角平分线）
+                bisector_x = -(edge_prev_n[0] + edge_next_n[0])
+                bisector_z = -(edge_prev_n[1] + edge_next_n[1])
+                bisector_len = math.sqrt(bisector_x**2 + bisector_z**2)
+                if bisector_len > 1e-6:
+                    nx = bisector_x / bisector_len
+                    nz = bisector_z / bisector_len
+                else:
+                    # 退化为指向中心
+                    dx = center_x - v_curr[0]
+                    dz = center_z - v_curr[2]
+                    len_h = math.sqrt(dx**2 + dz**2)
+                    if len_h > 1e-6:
+                        nx = dx / len_h
+                        nz = dz / len_h
+                    else:
+                        nx, nz = 0, 0
+            
+            # 端盖法线Y分量
+            ny = 1.0 if is_top else -1.0
+            
+            # 对于非完全圆滑的形状，混合法线以保留一些圆滑感
+            if avg_corner_radius > 0.01 and avg_corner_radius < 0.99:
+                # 混合径向法线和硬边法线
+                mix_factor = avg_corner_radius  # 圆角越大越圆滑
+                # 径向法线
+                dx = center_x - v_curr[0]
+                dz = center_z - v_curr[2]
+                len_h = math.sqrt(dx**2 + dz**2)
+                if len_h > 1e-6:
+                    radial_nx = dx / len_h
+                    radial_nz = dz / len_h
+                else:
+                    radial_nx, radial_nz = nx, nz
+                # 混合
+                nx = nx * (1 - mix_factor) + radial_nx * mix_factor
+                nz = nz * (1 - mix_factor) + radial_nz * mix_factor
+                # 重新归一化
+                norm = math.sqrt(nx**2 + nz**2)
+                if norm > 1e-6:
+                    nx /= norm
+                    nz /= norm
+            
+            vn_idx = mesh.add_normal(nx, ny, nz)
+            cap_normals.append(vn_idx)
+        
+        return cap_normals
+    
+    # 计算端盖法线
+    normal_indices['bottom_cap'] = compute_cap_normals(bottom_coords, corner_radii_bottom, is_top=False)
+    normal_indices['top_cap'] = compute_cap_normals(top_coords, corner_radii_top, is_top=True)
     
     return normal_indices
 
@@ -1316,9 +1445,11 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
     bottom_v_indices = [idx for idx, _ in bottom_indices]
     top_v_indices = [idx for idx, _ in top_indices]
     
-    # 计算法线
+    # 计算法线（传入圆角半径用于端盖硬边/圆滑边判断）
     normal_indices = compute_normals_after_transform(
-        mesh, bottom_v_indices, top_v_indices, segments
+        mesh, bottom_v_indices, top_v_indices, segments,
+        corner_radii_bottom=bottom_corners,
+        corner_radii_top=top_corners
     )
     
     # Inlet模式：计算内圈法线（与外圈相反）
@@ -1392,9 +1523,6 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
     # 生成端盖
     if is_inlet:
         # Inlet模式：生成环形端盖
-        vn_down = normal_indices['bottom_cap']
-        vn_up = normal_indices['top_cap']
-        
         for i in range(segments):
             next_i = (i + 1) % segments
             bo_i = bottom_indices[i]
@@ -1403,13 +1531,19 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             bi_i = bottom_inner_indices[i]
             
             # 底部环形端盖（两个三角面）
+            # 使用每个顶点对应的端盖法线
+            vn_bo_i = normal_indices['bottom_cap'][i]
+            vn_bo_next = normal_indices['bottom_cap'][next_i]
+            vn_bi_i = inner_normal_indices['bottom_cap'][i]
+            vn_bi_next = inner_normal_indices['bottom_cap'][next_i]
+            
             # 底部法线朝下：从底部看是逆时针 (bo_i -> bo_next -> bi_next -> bi_i)
             mesh.add_face(bo_i[0], bo_next[0], bi_next[0],
                          bo_i[1], bo_next[1], bi_next[1],
-                         vn_down, vn_down, vn_down)
+                         vn_bo_i, vn_bo_next, vn_bi_next)
             mesh.add_face(bo_i[0], bi_next[0], bi_i[0],
                          bo_i[1], bi_next[1], bi_i[1],
-                         vn_down, vn_down, vn_down)
+                         vn_bo_i, vn_bi_next, vn_bi_i)
         
         for i in range(segments):
             next_i = (i + 1) % segments
@@ -1419,20 +1553,22 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             ti_i = top_inner_indices[i]
             
             # 顶部环形端盖（两个三角面）
+            vn_to_i = normal_indices['top_cap'][i]
+            vn_to_next = normal_indices['top_cap'][next_i]
+            vn_ti_i = inner_normal_indices['top_cap'][i]
+            vn_ti_next = inner_normal_indices['top_cap'][next_i]
+            
             # 顶部法线朝上：从顶部看是逆时针 (to_i -> ti_i -> ti_next -> to_next)
             mesh.add_face(to_i[0], ti_i[0], ti_next[0],
                          to_i[1], ti_i[1], ti_next[1],
-                         vn_up, vn_up, vn_up)
+                         vn_to_i, vn_ti_i, vn_ti_next)
             mesh.add_face(to_i[0], ti_next[0], to_next[0],
                          to_i[1], ti_next[1], to_next[1],
-                         vn_up, vn_up, vn_up)
+                         vn_to_i, vn_ti_next, vn_to_next)
         
         return len(bottom_indices) * 4
     else:
         # 普通模式：生成实心端盖
-        vn_down = normal_indices['bottom_cap']
-        vn_up = normal_indices['top_cap']
-        
         # 底部端盖
         center_bottom_local = np.array([
             -params.offset_x * scale_x, 
@@ -1442,15 +1578,18 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
         world_center_bottom = R @ center_bottom_local + pos
         v_center_bottom = mesh.add_vertex(world_center_bottom[0], world_center_bottom[1], world_center_bottom[2])
         vt_center_bottom = mesh.add_uv(0.5, 0.5)
+        vn_center_down = mesh.add_normal(0, -1, 0)  # 中心点使用纯朝下法线
         
         for i in range(segments):
             next_i = (i + 1) % segments
             b_i = bottom_indices[i]
             b_next = bottom_indices[next_i]
-            # 使用端盖法线 - 统一朝下
+            # 使用每个顶点对应的端盖法线
+            vn_b_i = normal_indices['bottom_cap'][i]
+            vn_b_next = normal_indices['bottom_cap'][next_i]
             mesh.add_face(v_center_bottom, b_i[0], b_next[0],
                          vt_center_bottom, b_i[1], b_next[1],
-                         vn_down, vn_down, vn_down)
+                         vn_center_down, vn_b_i, vn_b_next)
         
         # 顶部端盖
         cut_depth = 2 * params.offset_y * vertical_shear * scale_y
@@ -1462,15 +1601,18 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
         world_center_top = R @ center_top_local + pos
         v_center_top = mesh.add_vertex(world_center_top[0], world_center_top[1], world_center_top[2])
         vt_center_top = mesh.add_uv(0.5, 0.5)
+        vn_center_up = mesh.add_normal(0, 1, 0)  # 中心点使用纯朝上法线
         
         for i in range(segments):
             next_i = (i + 1) % segments
             t_i = top_indices[i]
             t_next = top_indices[next_i]
-            # 使用端盖法线 - 统一朝上
+            # 使用每个顶点对应的端盖法线
+            vn_t_i = normal_indices['top_cap'][i]
+            vn_t_next = normal_indices['top_cap'][next_i]
             mesh.add_face(v_center_top, t_next[0], t_i[0],
                          vt_center_top, t_next[1], t_i[1],
-                         vn_up, vn_up, vn_up)
+                         vn_center_up, vn_t_next, vn_t_i)
         
         return len(bottom_indices) + len(top_indices) + 2
 
