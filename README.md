@@ -1,6 +1,6 @@
-# SimpleRockets 2 to OBJ Converter
+# SimpleRockets 2 to USD Converter
 
-将 SimpleRockets 2 (朱诺：新起源) 的飞船设计文件 (.xml) 转换为 OBJ 3D 模型格式的脚本工具。
+将 SimpleRockets 2 (朱诺：新起源) 的飞船设计文件 (.xml) 转换为 USD 3D 模型格式的脚本工具。
 
 ## 功能特性
 
@@ -18,22 +18,77 @@
   - cornerRadiuses（圆角半径）
   - clampDistances（层级挤压）
   - partScale（整体缩放）
-- 自动导出材质文件 (.mtl)
+- 自动导出材质（内嵌于 USD 文件）
 - 保留原始颜色和材质属性
 
 ## 环境要求
 
-- Python 3.8 或更高版本
-- NumPy 库
+| 依赖 | 说明 |
+|------|------|
+| Python | 3.8 或更高版本 |
+| NumPy | Python 数值计算库 |
+| usd-core | USD 核心库（需手动安装到 deps 目录）
 
 ## 安装
 
-1. 克隆或下载本仓库
-2. 安装依赖：
+### 1. 克隆或下载本仓库
+
+### 2. 安装 NumPy
 
 ```bash
 pip install numpy
 ```
+
+### 3. 安装 USD 核心库（必需）
+
+由于 USD 库体积较大，不随仓库一起发布，需要手动安装到 `deps` 目录。
+
+**快速安装（Windows PowerShell）：**
+
+```powershell
+# 在项目根目录下执行
+pip download usd-core -d temp_deps
+Expand-Archive .\temp_deps\usd_core-*.whl -DestinationPath .\deps
+Remove-Item temp_deps -Recurse
+```
+
+**手动安装步骤：**
+
+1. 下载 usd-core 轮子包：
+   ```bash
+   pip download usd-core -d temp_deps
+   ```
+
+2. 解压下载的 `.whl` 文件到 `deps` 目录：
+   - 找到 `temp_deps` 文件夹中的 `usd_core-xxx.whl` 文件
+   - 用解压软件打开，将其中内容解压到项目根目录的 `deps/` 文件夹下
+   - 或者使用命令行：`unzip temp_deps/usd_core-*.whl -d deps/`
+
+3. 清理临时文件：
+   ```bash
+   # Windows
+   rmdir /s /q temp_deps
+   # 或 PowerShell
+   Remove-Item temp_deps -Recurse
+   ```
+
+**验证安装：**
+
+安装完成后，`deps/` 目录结构应如下所示：
+
+```
+deps/
+├── pxr/
+│   ├── Usd/
+│   ├── UsdGeom/
+│   ├── Sdf/
+│   ├── Gf/
+│   ├── UsdShade/
+│   └── ...
+└── usd_core-25.11.dist-info/
+```
+
+**注意**：如果 `deps/` 目录已存在 `pxr/` 文件夹（USD 库），则无需重复安装。
 
 ## 文件夹结构
 
@@ -41,7 +96,7 @@ pip install numpy
 Juno2obj/
 ├── sr2_to_obj.py      # 主脚本
 ├── Input/             # 输入文件夹（放置 .xml 文件）
-├── Output/            # 输出文件夹（生成 .obj 和 .mtl 文件）
+├── Output/            # 输出文件夹（生成 .usda 文件）
 └── README.md          # 本文件
 ```
 
@@ -87,22 +142,22 @@ Juno2obj/
 python sr2_to_obj.py
 ```
 
-输出文件将自动生成在 `Output/Test-Juno2OBJ.obj`
+输出文件将自动生成在 `Output/Test-Juno2OBJ.usda`
 
 **方式二：指定文件名**
 
 ```bash
-python sr2_to_obj.py "你的飞船.xml" "你的飞船.obj"
+python sr2_to_obj.py "你的飞船.xml" "你的飞船.usda"
 ```
 
-脚本会自动从 `Input/你的飞船.xml` 读取，输出到 `Output/你的飞船.obj`
+脚本会自动从 `Input/你的飞船.xml` 读取，输出到 `Output/你的飞船.usda`
 
 > **提示**：如果文件名包含空格，请务必使用双引号 `"` 包裹文件名。
 
 **方式三：指定完整路径**
 
 ```bash
-python sr2_to_obj.py "C:/path/to/input.xml" "C:/path/to/output.obj"
+python sr2_to_obj.py "C:/path/to/input.xml" "C:/path/to/output.usda"
 ```
 
 ## 示例
@@ -117,18 +172,24 @@ run.bat
 python sr2_to_obj.py
 
 # 指定文件名（推荐加引号，防止空格问题）
-python sr2_to_obj.py "My Rocket.xml" "My Rocket.obj"
+python sr2_to_obj.py "My Rocket.xml" "My Rocket.usda"
 
 # 完整路径
-python sr2_to_obj.py "F:/My Crafts/ship.xml" "F:/My Models/ship.obj"
+python sr2_to_obj.py "F:/My Crafts/ship.xml" "F:/My Models/ship.usda"
 ```
 
 ## 输出文件
 
-脚本会生成两个文件：
+脚本会生成一个 USD ASCII 文件：
 
-- `.obj` - 3D 模型文件（顶点、面、法线、UV）
-- `.mtl` - 材质文件（颜色、金属度、粗糙度）
+- `.usda` - 3D 模型文件（包含顶点、面、法线、UV、材质信息）
+
+USD 格式可以在多种 3D 软件中打开，包括：
+- Blender（使用 USD 插件）
+- Maya
+- Houdini
+- Unity
+- Unreal Engine
 
 ## 参数说明
 
@@ -157,7 +218,29 @@ python sr2_to_obj.py "F:/My Crafts/ship.xml" "F:/My Models/ship.obj"
 
 **解决方法**：确保 XML 文件已放入 `Input` 文件夹，且文件名正确。如果文件名包含空格，请用双引号包裹：
 ```bash
-python sr2_to_obj.py "My Ship.xml" "My Ship.obj"
+python sr2_to_obj.py "My Ship.xml" "My Ship.usda"
+```
+
+### 错误：USD库加载失败
+
+```
+USD库加载失败: No module named 'pxr'
+请确保 deps 目录包含 usd-core
+```
+
+**解决方法**：
+1. 按照 [安装](#安装) 部分的说明，下载并解压 `usd-core` 到 `deps` 目录
+2. 确保 `deps/pxr/` 文件夹存在
+3. 如果仍然报错，尝试重新下载安装：
+
+```bash
+# 删除旧的 deps 内容
+Remove-Item deps/* -Recurse -Force
+
+# 重新下载安装
+pip download usd-core -d temp_deps
+Expand-Archive temp_deps/usd_core-*.whl -DestinationPath deps/
+Remove-Item temp_deps -Recurse
 ```
 
 ### 错误：找不到模块 'numpy'

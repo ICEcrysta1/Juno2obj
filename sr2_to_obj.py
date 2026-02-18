@@ -1150,6 +1150,14 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
     top_rx = params.radius_x * params.top_scale_x
     top_rz = params.radius_z * params.top_scale_z
     
+    # 计算内圈半径（Inlet模式）
+    if is_inlet:
+        inner_bottom_rx = max(0, bottom_rx - inlet_wall_thickness)
+        inner_bottom_rz = max(0, bottom_rz - inlet_wall_thickness)
+        inner_top_rx = max(0, top_rx - inlet_wall_thickness)
+        inner_top_rz = max(0, top_rz - inlet_wall_thickness)
+    else:
+        inner_bottom_rx = inner_bottom_rz = inner_top_rx = inner_top_rz = 0.0
     for i in range(segments):
         angle = i * angle_step
         bx, by, bz = squeezed_bottom[i]
@@ -1255,8 +1263,8 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             local_ti = np.array([txi, tyi, tzi])
             world_ti = R @ local_ti + pos
             
-            # 内圈法线（朝内，与外圈相反）
-            # 内圈和外圈在同一锥面上，使用相同的法线方向（只是朝内）
+            # 内圈法线 - 朝内（指向空心内部）
+            # 与外圈法线方向相反，但都垂直于同一锥面
             normal_bi = np.array([-nbx, -nby, -nbz])
             normal_ti = np.array([-nbx, -nby, -nbz])
             world_normal_bi = R @ normal_bi
@@ -1266,14 +1274,14 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             v_idx_bi = mesh.add_vertex(world_bi[0], world_bi[1], world_bi[2])
             vn_idx_bi = mesh.add_normal(world_normal_bi[0], world_normal_bi[1], world_normal_bi[2])
             vt_idx_bi = mesh.add_uv(u, 0.0)
-            # 内圈端盖法线朝上（指向空心内部）
+            # 内圈底面法线朝上（指向空心内部）
             bottom_inner_indices.append((v_idx_bi, vt_idx_bi, vn_idx_bi, vn_up_idx))
-            
+
             # 添加顶部内圈顶点
             v_idx_ti = mesh.add_vertex(world_ti[0], world_ti[1], world_ti[2])
             vn_idx_ti = mesh.add_normal(world_normal_ti[0], world_normal_ti[1], world_normal_ti[2])
             vt_idx_ti = mesh.add_uv(u, 1.0)
-            # 内圈端盖法线朝下（指向空心内部）
+            # 内圈顶面法线朝下（指向空心内部）
             top_inner_indices.append((v_idx_ti, vt_idx_ti, vn_idx_ti, vn_down_idx))
     
     # 生成侧面四边形
@@ -1306,14 +1314,15 @@ def generate_ellipse_cylinder(mesh: Mesh, params: FuselageParams,
             ti_next = top_inner_indices[next_i]
             ti_i = top_inner_indices[i]
             
-            # 内侧面（法线朝内，面的顺序与外侧面相反）
+            # 内侧面（法线朝内，面的顺序与法线方向相反）
+            # 从内部看是顺时针，正面朝外（因为法线朝内）
             # 内圈存储的也是: 0=v_idx, 1=vt_idx, 2=vn_side_idx, 3=vn_cap_idx
-            mesh.add_face(bi_i[0], bi_next[0], ti_next[0],
-                         bi_i[1], bi_next[1], ti_next[1],
-                         bi_i[2], bi_next[2], ti_next[2])
             mesh.add_face(bi_i[0], ti_next[0], ti_i[0],
                          bi_i[1], ti_next[1], ti_i[1],
                          bi_i[2], ti_next[2], ti_i[2])
+            mesh.add_face(bi_i[0], bi_next[0], ti_next[0],
+                         bi_i[1], bi_next[1], ti_next[1],
+                         bi_i[2], bi_next[2], ti_next[2])
     
     # 生成端盖
     if is_inlet:

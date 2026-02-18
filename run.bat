@@ -30,6 +30,48 @@ if errorlevel 1 (
     echo.
 )
 
+:: 检测 USD 依赖
+python -c "from pxr import Usd, UsdGeom" >nul 2>&1
+if errorlevel 1 (
+    echo [提示] 未检测到 USD 库，正在自动安装...
+    echo.
+    
+    if not exist "deps" mkdir "deps"
+    
+    echo [步骤 1/3] 正在下载 usd-core...
+    pip download usd-core -d temp_deps --only-binary :all:
+    if errorlevel 1 (
+        echo [错误] 下载 usd-core 失败，请检查网络连接
+        pause
+        exit /b 1
+    )
+    
+    echo [步骤 2/3] 正在解压到 deps 目录...
+    for %%F in (temp_deps\usd_core-*.whl) do (
+        powershell -Command "Expand-Archive -Path '%%F' -DestinationPath 'deps' -Force"
+        if errorlevel 1 (
+            echo [错误] 解压失败，尝试使用 Python 解压...
+            python -c "import zipfile; zipfile.ZipFile('%%F').extractall('deps')"
+        )
+    )
+    
+    echo [步骤 3/3] 清理临时文件...
+    rmdir /s /q temp_deps 2>nul
+    
+    :: 验证安装
+    python -c "from pxr import Usd, UsdGeom" >nul 2>&1
+    if errorlevel 1 (
+        echo [错误] USD 库安装失败，请手动安装
+        echo [提示] 方法1: 运行命令 pip install usd-core 后复制 site-packages/pxr 到 deps/
+        echo [提示] 方法2: 访问 https://github.com/PixarAnimationStudios/OpenUSD 查看安装指南
+        pause
+        exit /b 1
+    )
+    
+    echo [完成] USD 库安装成功
+    echo.
+)
+
 if not exist "Input" mkdir "Input"
 if not exist "Output" mkdir "Output"
 
