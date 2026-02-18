@@ -103,8 +103,20 @@ class SkeletonMerger(MeshMerger):
         if output_dir and not os.path.exists(output_dir):
             os.makedirs(output_dir, exist_ok=True)
         
-        # 创建舞台
+        # 创建舞台（使用 CreateOver 覆盖已存在的文件）
         usd_filename = abs_filename.replace("\\", "/")
+        if os.path.exists(usd_filename):
+            # 如果文件已存在，使用 Open 然后 Save，或者先删除
+            try:
+                os.remove(usd_filename)
+            except PermissionError:
+                # 如果无法删除（被占用），使用不同名称
+                import time
+                timestamp = int(time.time())
+                base, ext = os.path.splitext(usd_filename)
+                usd_filename = f"{base}_{timestamp}{ext}"
+                print(f"[SkeletonMerger] Warning: Output file in use, saving to: {usd_filename}")
+        
         stage = Usd.Stage.CreateNew(usd_filename)
         UsdGeom.SetStageMetersPerUnit(stage, 1.0)
         UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)

@@ -188,61 +188,74 @@ class SkeletonBuilder:
         return T.flatten('F').tolist()
     
     def _assign_bindings(self):
-        """为每个零件分配绑定关节"""
-        for part_id in self.parts:
-            if part_id in self.joint_parts:
-                # 关节零件绑定到自己
-                self.bindings[part_id] = Binding(
-                    part_id=part_id,
-                    joint_id=self.joints[part_id].joint_id,
-                    is_joint=True
-                )
-            else:
-                # 普通零件绑定到最近的关节
-                joint_id = self._find_nearest_joint(part_id)
-                self.bindings[part_id] = Binding(
-                    part_id=part_id,
+        """为每个零件分配绑定关节
+        
+        策略：从每个关节出发，向下遍历其子树，将所有非关节零件绑定到该关节。
+        如果遇到另一个关节，则停止该分支的遍历（由那个关节处理自己的子树）。
+        """
+        # 首先，所有关节绑定到自己
+        for part_id in self.joint_parts:
+            self.bindings[part_id] = Binding(
+                part_id=part_id,
+                joint_id=self.joints[part_id].joint_id,
+                is_joint=True
+            )
+        
+        # 从每个关节（不只是根关节）开始，向下遍历其子树
+        for part_id, joint in self.joints.items():
+            self._bind_subtree(part_id, joint.joint_id)
+    
+    def _bind_subtree(self, root_part_id: str, joint_id: str):
+        """递归绑定子树中的所有零件到指定关节
+        
+        Args:
+            root_part_id: 子树的根零件ID（这是一个关节）
+            joint_id: 要绑定到的关节ID
+        """
+        # 获取该零件的所有直接子零件
+        children = self.parent_to_children.get(root_part_id, [])
+        
+        for child_id in children:
+            if child_id in self.joint_parts:
+                # 遇到另一个关节，跳过（它会由自己的_bind_subtree处理）
+                continue
+            
+            if child_id not in self.bindings:
+                # 绑定该零件到当前关节
+                self.bindings[child_id] = Binding(
+                    part_id=child_id,
                     joint_id=joint_id,
                     is_joint=False
                 )
+                
+                # 递归处理该零件的子零件
+                self._bind_subtree_recursive(child_id, joint_id)
     
-    def _find_nearest_joint(self, part_id: str) -> Optional[str]:
-        """找到零件最近的关节（沿着树向上，简单缓存）"""
-        # 确保 part_id 是字符串
-        part_id = str(part_id)
-
-        # 检查缓存 - 使用更清晰的逻辑
-        if part_id in self._nearest_joint_cache:
-            return self._nearest_joint_cache[part_id]
-
-        current = self.child_to_parent.get(part_id)
-        result = None
-        visited = set()  # 防循环，局部临时集合
-
-        while current and current not in visited:
-            visited.add(current)
-
-            # 确保 current 也是字符串
-            current_str = str(current)
-
-            if current_str in self.joint_parts:
-                result = self.joints[current_str].joint_id
-                break
-
-            current = self.child_to_parent.get(current_str)
-
-        # 如果退出循环是因为遇到循环（current in visited），
-        # 检查已访问路径中是否有关节（这可能发生在XML连接有循环时）
-        if current in visited and result is None:
-            for node in visited:
-                node_str = str(node)
-                if node_str in self.joint_parts:
-                    result = self.joints[node_str].joint_id
-                    break
-
-        # 只缓存结果，不缓存路径
-        self._nearest_joint_cache[part_id] = result
-        return result
+    def _bind_subtree_recursive(self, part_id: str, joint_id: str):
+        """递归绑定子树（非关节零件）
+        
+        Args:
+            part_id: 当前零件ID
+            joint_id: 要绑定到的关节ID
+        """
+        # 获取该零件的所有直接子零件
+        children = self.parent_to_children.get(part_id, [])
+        
+        for child_id in children:
+            if child_id in self.joint_parts:
+                # 遇到另一个关节，停止该分支
+                continue
+            
+            if child_id not in self.bindings:
+                # 绑定该零件到当前关节
+                self.bindings[child_id] = Binding(
+                    part_id=child_id,
+                    joint_id=joint_id,
+                    is_joint=False
+                )
+                
+                # 继续递归
+                self._bind_subtree_recursive(child_id, joint_id)
 
     
     def _get_root_joints(self) -> List[str]:
