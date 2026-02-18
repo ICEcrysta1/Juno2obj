@@ -260,28 +260,45 @@ class NormalCalculator:
         inner_cap_top_normal_map = {}     # 内层顶面端盖法线
         
         if is_inlet and bottom_inner_indices and top_inner_indices:
-            # 外层底面端盖法线：朝上 (0, 1, 0)
+            # 根据零件类型决定端盖法线方向
+            # FairingBase1 是倒置的（底面朝上），Fairing1 是正置的
+            part_type = ring_info.get('part_type', '')
+            
+            if part_type == 'FairingBase1':
+                # FairingBase1：倒置，底面朝上，顶面朝下
+                outer_bottom_normal = (0.0, -1.0, 0.0)   # 外层底面朝上
+                inner_bottom_normal = (0.0, -1.0, 0.0)  # 内层底面朝下
+                outer_top_normal = (0.0, 1.0, 0.0)     # 外层顶面朝下
+                inner_top_normal = (0.0, 1.0, 0.0)      # 内层顶面朝上
+            else:
+                # Fairing1, Inlet1 等：正置，底面朝下，顶面朝上
+                outer_bottom_normal = (0.0, 1.0, 0.0)  # 外层底面朝下
+                inner_bottom_normal = (0.0, 1.0, 0.0)   # 内层底面朝上
+                outer_top_normal = (0.0, -1.0, 0.0)      # 外层顶面朝上
+                inner_top_normal = (0.0, -1.0, 0.0)     # 内层顶面朝下
+            
+            # 外层底面端盖法线
             for idx in bottom_indices:
                 vn_idx = len(normals)
-                normals.append((0.0, 1.0, 0.0))
+                normals.append(outer_bottom_normal)
                 outer_cap_bottom_normal_map[idx] = vn_idx
             
-            # 内层底面端盖法线：朝下 (0, -1, 0)
+            # 内层底面端盖法线
             for idx in bottom_inner_indices:
                 vn_idx = len(normals)
-                normals.append((0.0, -1.0, 0.0))
+                normals.append(inner_bottom_normal)
                 inner_cap_bottom_normal_map[idx] = vn_idx
             
-            # 外层顶面端盖法线：朝下 (0, -1, 0)
+            # 外层顶面端盖法线
             for idx in top_indices:
                 vn_idx = len(normals)
-                normals.append((0.0, -1.0, 0.0))
+                normals.append(outer_top_normal)
                 outer_cap_top_normal_map[idx] = vn_idx
             
-            # 内层顶面端盖法线：朝上 (0, 1, 0)
+            # 内层顶面端盖法线
             for idx in top_inner_indices:
                 vn_idx = len(normals)
-                normals.append((0.0, 1.0, 0.0))
+                normals.append(inner_top_normal)
                 inner_cap_top_normal_map[idx] = vn_idx
         
         # 为每个面分配法线
