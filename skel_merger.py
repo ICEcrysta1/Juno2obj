@@ -144,13 +144,17 @@ class SkeletonMerger(MeshMerger):
             path = f"{parent_path}/{joint_id}" if parent_path else joint_id
             joint_paths.append(path)
             
-            # 绑定矩阵 (4x4)
-            mat = joint['bind_matrix']
-            # 确保是16个元素
-            if len(mat) != 16:
-                mat = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
-            bind_transforms.append(Gf.Matrix4d(*mat))
-            rest_transforms.append(Gf.Matrix4d(*mat))
+            # 绑定矩阵 (bindTransforms) - 世界空间
+            bind_mat = joint['bind_matrix']
+            if len(bind_mat) != 16:
+                bind_mat = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
+            bind_transforms.append(Gf.Matrix4d(*bind_mat))
+            
+            # 休息姿态 (restTransforms) - 相对于父关节的本地空间
+            local_mat = joint.get('local_matrix', bind_mat)
+            if len(local_mat) != 16:
+                local_mat = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
+            rest_transforms.append(Gf.Matrix4d(*local_mat))
             
             # 处理子关节
             for child_joint_id in joint['children']:

@@ -22,8 +22,9 @@ class Joint:
     parent_joint_id: Optional[str]   # 父关节ID
     position: Tuple[float, float, float]
     rotation: Tuple[float, float, float]
-    bind_matrix: List[float] = field(default_factory=list)  # 4x4矩阵，列优先
-    children: List[str] = field(default_factory=list)       # 子关节ID列表
+    bind_matrix: List[float] = field(default_factory=list)   # 世界空间矩阵
+    local_matrix: List[float] = field(default_factory=list)  # 相对于父关节的本地矩阵
+    children: List[str] = field(default_factory=list)        # 子关节ID列表
 
 
 @dataclass
@@ -50,6 +51,10 @@ class SkeletonBuilder:
         self.joints: Dict[str, Joint] = {}          # part_id -> Joint
         self.bindings: Dict[str, Binding] = {}      # part_id -> Binding
         self.joint_parts: Set[str] = set()          # 关节零件ID集合
+        
+        # 缓存优化
+        self._joint_id_to_part_cache: Dict[str, str] = {}  # joint_id -> part_id
+        self._nearest_joint_cache: Dict[str, Optional[str]] = {}  # part_id -> nearest_joint_id
     
     def build(self) -> Dict:
         """
@@ -121,12 +126,51 @@ class SkeletonBuilder:
         return None
     
     def _calculate_bind_matrices(self):
-        """计算每个关节的绑定矩阵"""
+        """计算每个关节的绑定矩阵
+        
+        bindTransforms: 关节的世界变换（绑定姿态）
+        restTransforms: 关节相对于父关节的本地变换
+        """
+        # 第一步：计算所有关节的世界矩阵
+        world_matrices = {}
         for part_id, joint in self.joints.items():
-            joint.bind_matrix = self._compute_matrix(
+            world_matrices[part_id] = self._compute_matrix(
                 joint.position, 
                 joint.rotation
             )
+        
+        # 第二步：计算本地矩阵（相对于父关节）
+        for part_id, joint in self.joints.items():
+            if joint.parent_joint_id is None:
+                # 根关节：本地矩阵 = 世界矩阵
+                joint.local_matrix = world_matrices[part_id]
+            else:
+                # 子关节：本地矩阵 = 父世界矩阵的逆 × 子世界矩阵
+                parent_part_id = self._joint_id_to_part_id(joint.parent_joint_id)
+                if parent_part_id:
+                    parent_world = np.array(world_matrices[parent_part_id]).reshape(4, 4, order='F')
+                    child_world = np.array(world_matrices[part_id]).reshape(4, 4, order='F')
+                    
+                    parent_inv = np.linalg.inv(parent_world)
+                    local_matrix = parent_inv @ child_world
+                    
+                    joint.local_matrix = local_matrix.flatten('F').tolist()
+                else:
+                    joint.local_matrix = world_matrices[part_id]
+            
+            # bind_matrix 使用世界矩阵（用于绑定姿态）
+            joint.bind_matrix = world_matrices[part_id]
+    
+    def _joint_id_to_part_id(self, joint_id: str) -> Optional[str]:
+        """从 joint_id 找到对应的 part_id（使用缓存）"""
+        if joint_id not in self._joint_id_to_part_cache:
+            for part_id, joint in self.joints.items():
+                if joint.joint_id == joint_id:
+                    self._joint_id_to_part_cache[joint_id] = part_id
+                    return part_id
+            self._joint_id_to_part_cache[joint_id] = None
+            return None
+        return self._joint_id_to_part_cache[joint_id]
     
     def _compute_matrix(self, pos: Tuple, rot: Tuple) -> List[float]:
         """从位置和旋转计算4x4变换矩阵（列优先）"""
@@ -162,13 +206,40 @@ class SkeletonBuilder:
                 )
     
     def _find_nearest_joint(self, part_id: str) -> Optional[str]:
-        """找到零件最近的关节（沿着树向上）"""
+        """找到零件最近的关节（沿着树向上，使用缓存+路径压缩）"""
+        if part_id in self._nearest_joint_cache:
+            return self._nearest_joint_cache[part_id]
+        
+        # 路径收集
+        path = [part_id]
         current = self.child_to_parent.get(part_id)
+        result = None
+        visited = {part_id}  # 防循环
+        
         while current:
+            # 防循环
+            if current in visited:
+                break
+            visited.add(current)
+            
+            # 检查缓存
+            if current in self._nearest_joint_cache:
+                result = self._nearest_joint_cache[current]
+                break
+            
+            path.append(current)
+            
             if current in self.joint_parts:
-                return self.joints[current].joint_id
+                result = self.joints[current].joint_id
+                break
+            
             current = self.child_to_parent.get(current)
-        return None
+        
+        # 路径压缩：路径上所有节点都指向同一个结果
+        for node in path:
+            self._nearest_joint_cache[node] = result
+        
+        return result
     
     def _get_root_joints(self) -> List[str]:
         """获取根关节（没有关节父的）"""
