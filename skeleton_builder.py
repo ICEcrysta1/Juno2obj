@@ -44,7 +44,8 @@ class SkeletonBuilder:
             parts_data: parser 输出的 parts 列表 (每个是dict)
             connections_data: connection_parser 输出的连接数据
         """
-        self.parts = {p['part_id']: p for p in parts_data}
+        # 确保 part_id 是字符串类型（防御性编程）
+        self.parts = {str(p['part_id']): p for p in parts_data}
         self.child_to_parent = connections_data['child_to_parent']
         self.parent_to_children = connections_data.get('parent_to_children', {})
         
@@ -207,27 +208,33 @@ class SkeletonBuilder:
     
     def _find_nearest_joint(self, part_id: str) -> Optional[str]:
         """找到零件最近的关节（沿着树向上，简单缓存）"""
-        # 检查缓存
-        cached = self._nearest_joint_cache.get(part_id)
-        if cached is not None or part_id in self._nearest_joint_cache:
-            return cached
-        
+        # 确保 part_id 是字符串
+        part_id = str(part_id)
+
+        # 检查缓存 - 使用更清晰的逻辑
+        if part_id in self._nearest_joint_cache:
+            return self._nearest_joint_cache[part_id]
+
         current = self.child_to_parent.get(part_id)
         result = None
         visited = set()  # 防循环，局部临时集合
-        
+
         while current and current not in visited:
             visited.add(current)
-            
-            if current in self.joint_parts:
-                result = self.joints[current].joint_id
+
+            # 确保 current 也是字符串
+            current_str = str(current)
+
+            if current_str in self.joint_parts:
+                result = self.joints[current_str].joint_id
                 break
-            
-            current = self.child_to_parent.get(current)
-        
+
+            current = self.child_to_parent.get(current_str)
+
         # 只缓存结果，不缓存路径
         self._nearest_joint_cache[part_id] = result
         return result
+
     
     def _get_root_joints(self) -> List[str]:
         """获取根关节（没有关节父的）"""

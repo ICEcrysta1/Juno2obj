@@ -54,22 +54,37 @@ class SkeletonMerger(MeshMerger):
         print(f"[SkeletonMerger] 加载 {joint_count} 个关节，{len(bindings)} 个绑定")
     
     def _build_joints_order(self):
-        """构建关节的拓扑排序（父在前，子在后）"""
+        """构建关节的拓扑排序（父在前，子在后）
+
+        注意：必须与 _setup_skeleton 中的顺序完全一致！
+        使用完整路径格式：joint_33/joint_35/joint_38
+        """
         joints = self.skeleton_data['joints']
-        
-        def add_joint_recursive(joint_id: str):
-            if joint_id not in self.joints_order:
-                self.joints_order.append(joint_id)
-                # 找到所有子关节
-                for part_id, joint in joints.items():
-                    if joint['joint_id'] == joint_id:
-                        for child_id in joint['children']:
-                            add_joint_recursive(child_id)
-        
+
+        # 创建 joint_id -> part_id 的反向映射
+        joint_id_to_part = {j['joint_id']: pid for pid, j in joints.items()}
+
+        def process_joint(joint_id: str, parent_path: str = ""):
+            """递归处理关节，构建完整路径"""
+            part_id = joint_id_to_part.get(joint_id)
+            if not part_id:
+                return
+
+            # 构建完整路径
+            path = f"{parent_path}/{joint_id}" if parent_path else joint_id
+            self.joints_order.append(path)
+
+            # 处理子关节
+            joint = joints[part_id]
+            for child_joint_id in joint['children']:
+                process_joint(child_joint_id, path)
+
         # 从根关节开始
         for root_id in self.skeleton_data['root_joints']:
-            add_joint_recursive(root_id)
-    
+            process_joint(root_id)
+
+        print(f"[SkeletonMerger] 关节顺序: {self.joints_order}")
+
     def merge_and_export(self, output_file: str, mesh_prefix: str = "Mesh",
                          use_custom_normals: bool = True):
         """导出带骨骼的 USD"""
@@ -182,8 +197,15 @@ class SkeletonMerger(MeshMerger):
         # 按 (joint_id, material) 分组 mesh
         meshes_by_joint_mat: Dict[Tuple[Optional[str], str], List[MeshData]] = defaultdict(list)
         
+        print(f"[SkeletonMerger] 处理 {len(self.meshes)} 个 mesh...")
+        sample_meshes = []
         for mesh in self.meshes:
-            joint_id = self.mesh_to_joint.get(mesh.part_id)
+            # 确保 part_id 是字符串类型
+            part_id_str = str(mesh.part_id)
+            joint_id = self.mesh_to_joint.get(part_id_str)
+            if part_id_str in ['272', '337', '208']:
+                sample_meshes.append((part_id_str, joint_id))
+            
             # 从面中提取材质，按材质分组
             mat_faces: Dict[str, List] = defaultdict(list)
             for face in mesh.faces:
@@ -192,13 +214,14 @@ class SkeletonMerger(MeshMerger):
             
             # 为每个材质创建子 mesh
             for mat_name, faces in mat_faces.items():
-                sub_mesh = MeshData(part_id=f"{mesh.part_id}_{mat_name}")
+                sub_mesh = MeshData(part_id=f"{part_id_str}_{mat_name}")
                 sub_mesh.vertices = mesh.vertices
                 sub_mesh.normals = mesh.normals
                 sub_mesh.uvs = mesh.uvs
                 sub_mesh.faces = faces
                 meshes_by_joint_mat[(joint_id, mat_name)].append(sub_mesh)
         
+        print(f"[SkeletonMerger] 关键零件: {sample_meshes}")
         print(f"[SkeletonMerger] 按(关节,材质)分组: {len(meshes_by_joint_mat)} 组")
         
         # 为每个 (关节, 材质) 组合创建 Mesh
@@ -340,39 +363,51 @@ class SkeletonMerger(MeshMerger):
                         vertex_count: int):
         """应用骨骼绑定"""
         from pxr import UsdSkel, Sdf, UsdGeom
-        
-        # 找到 joint 的索引
-        if joint_id not in self.joints_order:
+
+        # 找到 joint 的完整路径（因为 joints_order 存储的是完整路径）
+        # joint_id 可能是 "joint_38"，但 joints_order 中是 "joint_33/joint_35/joint_38"
+        joint_path = None
+        for path in self.joints_order:
+            if path.endswith(joint_id) or path == joint_id:
+                joint_path = path
+                break
+
+        if joint_path is None:
             print(f"[Warning] Joint {joint_id} not found in order")
             return
-        
-        joint_index = self.joints_order.index(joint_id)
-        
+
+        joint_index = self.joints_order.index(joint_path)
+
+        # 调试输出
+        mesh_name = str(usd_mesh.GetPath().name)
+        if '38' in joint_id or '272' in mesh_name or '337' in mesh_name or '208' in mesh_name:
+            print(f"[DEBUG] 绑定 {mesh_name} -> {joint_id} (路径: {joint_path}, 索引: {joint_index})")
+
         # 创建 SkelBindingAPI
         binding = UsdSkel.BindingAPI.Apply(usd_mesh.GetPrim())
         binding.CreateSkeletonRel().SetTargets([skeleton_path])
-        
+
         # 每个顶点100%绑定到这个关节
         joint_indices = [joint_index] * vertex_count
         joint_weights = [1.0] * vertex_count
-        
+
         # 创建 primvar
         primvars = UsdGeom.PrimvarsAPI(usd_mesh)
-        
+
         indices_primvar = primvars.CreatePrimvar(
             "skel:jointIndices",
             Sdf.ValueTypeNames.IntArray,
             UsdGeom.Tokens.vertex
         )
         indices_primvar.Set(joint_indices)
-        
+
         weights_primvar = primvars.CreatePrimvar(
             "skel:jointWeights",
             Sdf.ValueTypeNames.FloatArray,
             UsdGeom.Tokens.vertex
         )
         weights_primvar.Set(joint_weights)
-    
+
     def _create_and_bind_material(self, stage, prim, mat_name: str, root_path):
         """创建并绑定材质"""
         from pxr import Sdf, UsdShade, Gf, UsdGeom
