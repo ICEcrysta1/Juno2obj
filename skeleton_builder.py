@@ -206,28 +206,18 @@ class SkeletonBuilder:
                 )
     
     def _find_nearest_joint(self, part_id: str) -> Optional[str]:
-        """找到零件最近的关节（沿着树向上，使用缓存+路径压缩）"""
-        if part_id in self._nearest_joint_cache:
-            return self._nearest_joint_cache[part_id]
+        """找到零件最近的关节（沿着树向上，简单缓存）"""
+        # 检查缓存
+        cached = self._nearest_joint_cache.get(part_id)
+        if cached is not None or part_id in self._nearest_joint_cache:
+            return cached
         
-        # 路径收集
-        path = [part_id]
         current = self.child_to_parent.get(part_id)
         result = None
-        visited = {part_id}  # 防循环
+        visited = set()  # 防循环，局部临时集合
         
-        while current:
-            # 防循环
-            if current in visited:
-                break
+        while current and current not in visited:
             visited.add(current)
-            
-            # 检查缓存
-            if current in self._nearest_joint_cache:
-                result = self._nearest_joint_cache[current]
-                break
-            
-            path.append(current)
             
             if current in self.joint_parts:
                 result = self.joints[current].joint_id
@@ -235,10 +225,8 @@ class SkeletonBuilder:
             
             current = self.child_to_parent.get(current)
         
-        # 路径压缩：路径上所有节点都指向同一个结果
-        for node in path:
-            self._nearest_joint_cache[node] = result
-        
+        # 只缓存结果，不缓存路径
+        self._nearest_joint_cache[part_id] = result
         return result
     
     def _get_root_joints(self) -> List[str]:
