@@ -17,8 +17,8 @@ from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 
 # 复用 merger.py 的基础功能
-from merger import MeshMerger, MaterialData
-from models import MeshData, clean_material_name
+from .merger import MeshMerger, MaterialData
+from .models import MeshData, clean_material_name
 
 
 class SkeletonMerger(MeshMerger):

@@ -12,7 +12,7 @@ import os
 from typing import List, Tuple, Optional, Dict, Any
 from dataclasses import dataclass, field
 
-from models import (
+from .models import (
     PartData, FuselageParams, MeshData,
     rotation_matrix, get_rounded_rect_point
 )
@@ -776,7 +776,7 @@ def generate_meshes(parts: List[PartData], segments: int = 24) -> List[RawMeshDa
 
 if __name__ == '__main__':
     import sys
-    from parser import parse_sr2_xml
+    from .parser import parse_sr2_xml
     
     if len(sys.argv) < 2:
         print("用法: python generator.py <parsed_json_file>")

@@ -6,14 +6,13 @@
 
 Output/*
 Input/*
-__pycache__/*
+core/__pycache__/*
 !Input/Test-Juno2OBJ.xml
-cache_gen/*
-cache_normals/*
+cache/*
 .sr2_cache
 
 # Dependencies
-deps/
+deps/   
 *.whl
 
 # Project private docs

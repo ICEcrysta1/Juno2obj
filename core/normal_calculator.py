@@ -12,7 +12,7 @@ import glob
 from typing import List, Tuple, Optional, Dict, Any
 from dataclasses import dataclass, field
 
-from models import MeshData
+from .models import MeshData
 
 
 @dataclass

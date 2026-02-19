@@ -175,7 +175,7 @@ class SkeletonBuilder:
     
     def _compute_matrix(self, pos: Tuple, rot: Tuple) -> List[float]:
         """从位置和旋转计算4x4变换矩阵（列优先）"""
-        from models import rotation_matrix
+        from .models import rotation_matrix
         
         R = rotation_matrix(rot)  # 使用现有的 rotation_matrix
         

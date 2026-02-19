@@ -11,11 +11,11 @@ import shutil
 import argparse
 from typing import Optional
 
-from models import clean_material_name
-from parser import SR2XMLParser
-from generator import MeshGenerator
-from normal_calculator import NormalCalculator
-from merger import MeshMerger
+from .models import clean_material_name
+from .parser import SR2XMLParser
+from .generator import MeshGenerator
+from .normal_calculator import NormalCalculator
+from .merger import MeshMerger
 
 
 class SR2ToUSDPipeline:
@@ -73,8 +73,8 @@ class SR2ToUSDPipeline:
             mesh_prefix = os.path.splitext(os.path.basename(xml_file))[0]
             mesh_prefix = clean_material_name(mesh_prefix)
         
-        # 创建缓存目录
-        base_cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.sr2_cache')
+        # 创建缓存目录（在项目根目录下的 cache/ 中）
+        base_cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cache')
         cache_dir = os.path.join(base_cache_dir, mesh_prefix)
         gen_cache_dir = os.path.join(cache_dir, 'gen')
         normal_cache_dir = os.path.join(cache_dir, 'normals')
@@ -110,7 +110,7 @@ class SR2ToUSDPipeline:
                 print("=" * 60)
                 
                 # 解析连接
-                from connection_parser import ConnectionParser
+                from .connection_parser import ConnectionParser
                 self.connection_parser = ConnectionParser()
                 connections_data = self.connection_parser.parse_file(xml_file)
                 
@@ -122,7 +122,7 @@ class SR2ToUSDPipeline:
                 print(f"[Pipeline] 连接数: {len(connections_data['connections'])}")
                 
                 # 构建骨骼
-                from skeleton_builder import SkeletonBuilder
+                from .skeleton_builder import SkeletonBuilder
                 parts_data = [p.to_dict() for p in parts]
                 self.skeleton_builder = SkeletonBuilder(parts_data, connections_data)
                 skeleton_data = self.skeleton_builder.build()
@@ -176,7 +176,7 @@ class SR2ToUSDPipeline:
             
             if self.use_skeleton:
                 # 使用骨骼导出器
-                from skel_merger import SkeletonMerger
+                from .skel_merger import SkeletonMerger
                 self.skeleton_merger = SkeletonMerger()
                 self.skeleton_merger.load_normal_cache(processed_cache_dir)
                 self.skeleton_merger.load_materials(materials_file)
@@ -251,8 +251,9 @@ def main():
     # 处理输入文件
     xml_file = args.input
     if not os.path.isabs(xml_file):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        input_dir = os.path.join(script_dir, 'Input')
+        # pipeline.py 现在在 sr2obj/ 子目录中，需要向上找一级到项目根目录
+        project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        input_dir = os.path.join(project_dir, 'Input')
         xml_file = os.path.join(input_dir, xml_file)
     
     if not os.path.exists(xml_file):
@@ -260,8 +261,8 @@ def main():
         sys.exit(1)
     
     # 处理输出文件
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_dir = os.path.join(script_dir, 'Output')
+    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    output_dir = os.path.join(project_dir, 'Output')
     os.makedirs(output_dir, exist_ok=True)
     
     if args.output:
