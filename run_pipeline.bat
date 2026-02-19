@@ -10,15 +10,15 @@ set "PYTHONPATH=%~dp0deps;%PYTHONPATH%"
 
 set "DEFAULT_FILE=Test-Juno2OBJ.xml"
 
-:: 检查 Python
+:: 检�?Python
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo [错误] 未找到 Python
+    echo [错误] 未找�?Python
     pause
     exit /b 1
 )
 
-:: 检查 numpy
+:: 检�?numpy
 python -c "import numpy" >nul 2>&1
 if errorlevel 1 (
     echo [提示] 正在安装 numpy...
@@ -32,7 +32,7 @@ if errorlevel 1 (
     echo.
 )
 
-:: 检测 USD 依赖
+:: 检�?USD 依赖
 python -c "from pxr import Usd, UsdGeom" >nul 2>&1
 if errorlevel 1 (
     echo [提示] 未检测到 USD 库，正在自动安装...
@@ -43,16 +43,16 @@ if errorlevel 1 (
     echo [步骤 1/3] 正在下载 usd-core...
     pip download usd-core -d temp_deps --only-binary :all:
     if errorlevel 1 (
-        echo [错误] 下载 usd-core 失败，请检查网络连接
+        echo [错误] 下载 usd-core 失败，请检查网络连�?
         pause
         exit /b 1
     )
     
-    echo [步骤 2/3] 正在解压到 deps 目录...
+    echo [步骤 2/3] 正在解压�?deps 目录...
     for %%F in (temp_deps\usd_core-*.whl) do (
         powershell -Command "Expand-Archive -Path '%%F' -DestinationPath 'deps' -Force"
         if errorlevel 1 (
-            echo [错误] 解压失败，尝试使用 Python 解压...
+            echo [错误] 解压失败，尝试使�?Python 解压...
             python -c "import zipfile; zipfile.ZipFile('%%F').extractall('deps')"
         )
     )
@@ -63,14 +63,14 @@ if errorlevel 1 (
     :: 验证安装
     python -c "from pxr import Usd, UsdGeom" >nul 2>&1
     if errorlevel 1 (
-        echo [错误] USD 库安装失败，请手动安装
-        echo [提示] 方法1: 运行命令 pip install usd-core 后复制 site-packages/pxr 到 deps/
+        echo [错误] USD 库安装失败，请手动安�?
+        echo [提示] 方法1: 运行命令 pip install usd-core 后复�?site-packages/pxr �?deps/
         echo [提示] 方法2: 访问 https://github.com/PixarAnimationStudios/OpenUSD 查看安装指南
         pause
         exit /b 1
     )
     
-    echo [完成] USD 库安装成功
+    echo [完成] USD 库安装成�?
     echo.
 )
 
@@ -86,7 +86,7 @@ echo ============================================
 echo.
 
 echo --------------------------------------------
-echo [Input 文件夹中的 XML 文件]
+echo [Input 文件夹中�?XML 文件]
 echo --------------------------------------------
 
 set "FILE_COUNT=0"
@@ -101,14 +101,14 @@ goto START_CONVERT
 :NO_FILES
 echo   (暂无 XML 文件)
 echo.
-echo [提示] 请将 XML 文件放入 Input 文件夹
+echo [提示] 请将 XML 文件放入 Input 文件�?
 echo.
-set /p "OPEN_FOLDER=是否打开 Input 文件夹? (直接回车=Y/N): "
+set /p "OPEN_FOLDER=是否打开 Input 文件�? (直接回车=Y/N): "
 if "!OPEN_FOLDER!"=="" set "OPEN_FOLDER=Y"
 if /i "!OPEN_FOLDER!"=="Y" (
     explorer "Input"
     echo.
-    echo 请在放入 XML 文件后按任意键继续...
+    echo 请在放入 XML 文件后按任意键继�?..
     pause >nul
     goto MAIN_LOOP
 )
@@ -131,7 +131,7 @@ if "!USER_INPUT!"=="" (
         set "OUTPUT_NAME=Test-Juno2OBJ_skel.usda"
     ) else (
         echo.
-        echo [错误] 默认文件不存在
+        echo [错误] 默认文件不存�?
         pause
         goto MAIN_LOOP
     )
@@ -142,7 +142,7 @@ if "!USER_INPUT!"=="" (
     
     if not exist "Input\!INPUT_FILE!" (
         echo.
-        echo [错误] 文件不存在: Input\!INPUT_FILE!
+        echo [错误] 文件不存�? Input\!INPUT_FILE!
         pause
         goto MAIN_LOOP
     )
@@ -157,10 +157,10 @@ echo [信息] 输出文件: Output\!OUTPUT_NAME!
 echo ============================================
 echo.
 
-echo [执行] python pipeline.py "!INPUT_FILE!" "!OUTPUT_NAME!" --skeleton
+echo [执行] python -m core.pipeline "!INPUT_FILE!" "!OUTPUT_NAME!" --skeleton
 echo.
 
-python pipeline.py "!INPUT_FILE!" "!OUTPUT_NAME!" --skeleton
+python -m core.pipeline "!INPUT_FILE!" "!OUTPUT_NAME!" --skeleton
 
 if errorlevel 1 (
     echo.
@@ -170,9 +170,9 @@ if errorlevel 1 (
 )
 
 echo.
-echo [完成] 转换成功！
+echo [完成] 转换成功�?
 echo.
-set /p "OPEN_OUTPUT=是否打开 Output 文件夹? (直接回车=Y/N): "
+set /p "OPEN_OUTPUT=是否打开 Output 文件�? (直接回车=Y/N): "
 if "!OPEN_OUTPUT!"=="" set "OPEN_OUTPUT=Y"
 if /i "!OPEN_OUTPUT!"=="Y" explorer "Output"
 

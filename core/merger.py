@@ -12,7 +12,7 @@ from typing import List, Tuple, Dict, Any
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from models import Material, MeshData, clean_material_name
+from .models import Material, MeshData, clean_material_name
 
 
 @dataclass

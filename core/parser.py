@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 import json
 import os
 from typing import List, Tuple, Optional, Dict, Any
-from models import (
+from .models import (
     PartData, FuselageParams, Material,
     parse_fuselage_params, parse_materials, get_material_index, clean_material_name
 )

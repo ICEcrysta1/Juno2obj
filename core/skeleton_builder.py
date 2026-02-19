@@ -44,7 +44,8 @@ class SkeletonBuilder:
             parts_data: parser 输出的 parts 列表 (每个是dict)
             connections_data: connection_parser 输出的连接数据
         """
-        self.parts = {p['part_id']: p for p in parts_data}
+        # 确保 part_id 是字符串类型（防御性编程）
+        self.parts = {str(p['part_id']): p for p in parts_data}
         self.child_to_parent = connections_data['child_to_parent']
         self.parent_to_children = connections_data.get('parent_to_children', {})
         
@@ -174,7 +175,7 @@ class SkeletonBuilder:
     
     def _compute_matrix(self, pos: Tuple, rot: Tuple) -> List[float]:
         """从位置和旋转计算4x4变换矩阵（列优先）"""
-        from models import rotation_matrix
+        from .models import rotation_matrix
         
         R = rotation_matrix(rot)  # 使用现有的 rotation_matrix
         
@@ -187,47 +188,90 @@ class SkeletonBuilder:
         return T.flatten('F').tolist()
     
     def _assign_bindings(self):
-        """为每个零件分配绑定关节"""
-        for part_id in self.parts:
-            if part_id in self.joint_parts:
-                # 关节零件绑定到自己
-                self.bindings[part_id] = Binding(
-                    part_id=part_id,
-                    joint_id=self.joints[part_id].joint_id,
-                    is_joint=True
-                )
-            else:
-                # 普通零件绑定到最近的关节
-                joint_id = self._find_nearest_joint(part_id)
-                self.bindings[part_id] = Binding(
-                    part_id=part_id,
-                    joint_id=joint_id,
-                    is_joint=False
-                )
+        """为每个零件分配绑定关节
+        
+        策略：从每个关节出发，使用BFS遍历所有可达的零件（通过连接关系，不考虑方向）。
+        将遍历到的非关节零件绑定到该关节，直到遇到另一个关节为止。
+        """
+        # 首先，所有关节绑定到自己
+        for part_id in self.joint_parts:
+            self.bindings[part_id] = Binding(
+                part_id=part_id,
+                joint_id=self.joints[part_id].joint_id,
+                is_joint=True
+            )
+        
+        # 构建无向图（邻接表）- 连接是双向的
+        self._build_undirected_graph()
+        
+        # 从每个关节开始BFS遍历
+        for part_id, joint in self.joints.items():
+            self._bind_connected_parts(part_id, joint.joint_id)
     
-    def _find_nearest_joint(self, part_id: str) -> Optional[str]:
-        """找到零件最近的关节（沿着树向上，简单缓存）"""
-        # 检查缓存
-        cached = self._nearest_joint_cache.get(part_id)
-        if cached is not None or part_id in self._nearest_joint_cache:
-            return cached
+    def _build_undirected_graph(self):
+        """构建无向图，从连接数据中提取所有连接关系"""
+        self._undirected_graph: Dict[str, List[str]] = {}
         
-        current = self.child_to_parent.get(part_id)
-        result = None
-        visited = set()  # 防循环，局部临时集合
+        # 从 parent_to_children 添加边（已存在的父子关系）
+        for parent, children in self.parent_to_children.items():
+            if parent not in self._undirected_graph:
+                self._undirected_graph[parent] = []
+            for child in children:
+                self._undirected_graph[parent].append(child)
+                if child not in self._undirected_graph:
+                    self._undirected_graph[child] = []
+                self._undirected_graph[child].append(parent)
         
-        while current and current not in visited:
-            visited.add(current)
+        # 从 child_to_parent 添加反向边（确保双向）
+        for child, parent in self.child_to_parent.items():
+            if child not in self._undirected_graph:
+                self._undirected_graph[child] = []
+            if parent not in self._undirected_graph[child]:
+                self._undirected_graph[child].append(parent)
             
-            if current in self.joint_parts:
-                result = self.joints[current].joint_id
-                break
-            
-            current = self.child_to_parent.get(current)
+            if parent not in self._undirected_graph:
+                self._undirected_graph[parent] = []
+            if child not in self._undirected_graph[parent]:
+                self._undirected_graph[parent].append(child)
+    
+    def _bind_connected_parts(self, start_part_id: str, joint_id: str):
+        """从起始零件开始，BFS遍历所有可达的非关节零件并绑定
         
-        # 只缓存结果，不缓存路径
-        self._nearest_joint_cache[part_id] = result
-        return result
+        Args:
+            start_part_id: 起始零件ID（这是一个关节）
+            joint_id: 要绑定到的关节ID
+        """
+        from collections import deque
+        
+        queue = deque([start_part_id])
+        visited = {start_part_id}
+        
+        while queue:
+            current_id = queue.popleft()
+            
+            # 获取相邻零件
+            neighbors = self._undirected_graph.get(current_id, [])
+            
+            for neighbor_id in neighbors:
+                if neighbor_id in visited:
+                    continue
+                
+                visited.add(neighbor_id)
+                
+                if neighbor_id in self.joint_parts:
+                    # 遇到另一个关节，停止该分支（不加入队列）
+                    continue
+                
+                if neighbor_id not in self.bindings:
+                    # 绑定该零件到当前关节
+                    self.bindings[neighbor_id] = Binding(
+                        part_id=neighbor_id,
+                        joint_id=joint_id,
+                        is_joint=False
+                    )
+                    # 继续遍历该零件的邻居
+                    queue.append(neighbor_id)
+
     
     def _get_root_joints(self) -> List[str]:
         """获取根关节（没有关节父的）"""
