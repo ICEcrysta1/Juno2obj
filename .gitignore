@@ -2,8 +2,10 @@
 *.usdc
 *.png
 *.md
+*.spec
 !README.md
 
+build/*
 Output/*
 Input/*
 core/__pycache__/*
